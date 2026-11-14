@@ -1,0 +1,23 @@
+{
+  "name": "sevasetu-platform",
+  "version": "1.0.0",
+  "description": "SevaSetu – Hyperlocal Service Marketplace Platform",
+  "scripts": {
+    "dev:backend": "npm --prefix Backend run dev",
+    "dev:frontend": "npm --prefix Frontend run dev",
+    "build:frontend": "npm --prefix Frontend run build",
+    "dev:server": "npm --prefix Backend run dev",
+    "dev:client": "npm --prefix Frontend run dev",
+    "build:client": "npm --prefix Frontend run build",
+    "seed": "npm --prefix Backend run prisma:seed",
+    "test": "npm --prefix Backend test"
+  },
+  "keywords": [
+    "hyperlocal",
+    "marketplace",
+    "sevasetu",
+    "services"
+  ],
+  "author": "SevaSetu Team",
+  "license": "ISC"
+}
