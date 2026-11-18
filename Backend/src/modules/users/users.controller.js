@@ -1,173 +1,197 @@
-import prisma from '../../config/db.js';
+import User from '../../models/User.js';
+import CustomerProfile from '../../models/CustomerProfile.js';
+import ProviderProfile from '../../models/ProviderProfile.js';
+import ShopProfile from '../../models/ShopProfile.js';
+import Address from '../../models/Address.js';
 import { successResponse, errorResponse } from '../../utils/apiResponse.js';
+import { logAuditEvent } from '../../utils/auditLogger.js';
 
+/**
+ * GET /api/v1/users/me (or /api/v1/users/profile)
+ */
 export const getProfile = async (req, res, next) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-      include: {
-        customerProfile: true,
-        providerProfile: {
-          include: {
-            services: { include: { service: true } },
-            documents: true,
-            availability: true,
-          },
-        },
-        shopProfile: {
-          include: {
-            catalogItems: true,
-          },
-        },
-        adminProfile: true,
-        addresses: { orderBy: { createdAt: 'desc' } },
-      },
-    });
+    const user = await User.findById(req.user._id)
+      .populate('customerProfile')
+      .populate('providerProfile')
+      .populate('shopProfile')
+      .populate('adminProfile')
+      .populate('addresses');
 
-    const { passwordHash: _, ...userWithoutPassword } = user;
-    return successResponse(res, 'User profile retrieved', userWithoutPassword);
+    if (!user) return errorResponse(res, 'User not found', 404);
+
+    return successResponse(res, 'User profile retrieved', user.toSafeJSON());
   } catch (error) {
     next(error);
   }
 };
 
+/**
+ * PATCH /api/v1/users/me (or /api/v1/users/profile)
+ */
 export const updateProfile = async (req, res, next) => {
   try {
     const {
+      fullName,
+      mobile,
       phone,
       preferredLanguage,
-      fullName,
-      bio,
       avatarUrl,
+      bio,
       emergencyContact,
+      alternatePhone,
       businessName,
       experienceYears,
       skills,
       primaryCategory,
+      city,
+      area,
       servicePincode,
       serviceRadiusKm,
       shopName,
       shopCategory,
       address,
+      streetAddress,
       pincode,
-      city,
     } = req.body;
 
-    const user = await prisma.$transaction(async (tx) => {
-      const updatedUser = await tx.user.update({
-        where: { id: req.user.id },
-        data: {
-          ...(phone !== undefined && { phone }),
-          ...(preferredLanguage !== undefined && { preferredLanguage }),
+    const user = await User.findById(req.user._id);
+    if (!user) return errorResponse(res, 'User not found', 404);
+
+    if (fullName) user.fullName = fullName.trim();
+    if (mobile || phone) user.mobile = (mobile || phone).trim();
+    if (preferredLanguage) user.preferredLanguage = preferredLanguage;
+    if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
+
+    await user.save();
+
+    // Update role-specific profile
+    if (user.role === 'CUSTOMER') {
+      await CustomerProfile.findOneAndUpdate(
+        { userId: user._id },
+        {
+          ...(fullName && { fullName: fullName.trim() }),
+          ...(bio !== undefined && { bio }),
+          ...(avatarUrl !== undefined && { avatarUrl }),
+          ...(emergencyContact !== undefined && { emergencyContact }),
+          ...(alternatePhone !== undefined && { alternatePhone }),
         },
-      });
+        { upsert: true, new: true }
+      );
+    } else if (user.role === 'PROVIDER') {
+      const parsedSkills = skills
+        ? Array.isArray(skills)
+          ? skills
+          : skills.split(',').map((s) => s.trim())
+        : undefined;
 
-      if (req.user.role === 'CUSTOMER' && req.user.customerProfile) {
-        await tx.customerProfile.update({
-          where: { userId: req.user.id },
-          data: {
-            ...(fullName && { fullName }),
-            ...(bio !== undefined && { bio }),
-            ...(avatarUrl !== undefined && { avatarUrl }),
-            ...(emergencyContact !== undefined && { emergencyContact }),
-          },
-        });
-      } else if (req.user.role === 'PROVIDER' && req.user.providerProfile) {
-        await tx.providerProfile.update({
-          where: { userId: req.user.id },
-          data: {
-            ...(fullName && { fullName }),
-            ...(businessName !== undefined && { businessName }),
-            ...(bio !== undefined && { bio }),
-            ...(avatarUrl !== undefined && { avatarUrl }),
-            ...(experienceYears !== undefined && { experienceYears: parseInt(experienceYears) }),
-            ...(skills !== undefined && { skills: Array.isArray(skills) ? skills : [skills] }),
-            ...(primaryCategory !== undefined && { primaryCategory }),
-            ...(servicePincode !== undefined && { servicePincode }),
-            ...(serviceRadiusKm !== undefined && { serviceRadiusKm: parseFloat(serviceRadiusKm) }),
-          },
-        });
-      } else if (req.user.role === 'SHOP_OWNER' && req.user.shopProfile) {
-        await tx.shopProfile.update({
-          where: { userId: req.user.id },
-          data: {
-            ...(shopName && { shopName }),
-            ...(fullName && { ownerName: fullName }),
-            ...(shopCategory && { shopCategory }),
-            ...(address && { address }),
-            ...(pincode && { pincode }),
-            ...(city && { city }),
-            ...(avatarUrl && { bannerUrl: avatarUrl }),
-          },
-        });
-      }
-
-      return updatedUser;
-    });
-
-    return successResponse(res, 'Profile updated successfully');
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const deleteAccount = async (req, res, next) => {
-  try {
-    await prisma.user.update({
-      where: { id: req.user.id },
-      data: { isActive: false },
-    });
-    return successResponse(res, 'Account deactivated successfully');
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getAddresses = async (req, res, next) => {
-  try {
-    const addresses = await prisma.address.findMany({
-      where: { userId: req.user.id },
-      orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
-    });
-    return successResponse(res, 'Addresses retrieved', addresses);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const addAddress = async (req, res, next) => {
-  try {
-    const { label = 'Home', streetAddress, city, state, pincode, latitude, longitude, isDefault } =
-      req.body;
-
-    if (!streetAddress || !city || !state || !pincode) {
-      return errorResponse(res, 'Street address, city, state, and pincode are required', 400);
+      await ProviderProfile.findOneAndUpdate(
+        { userId: user._id },
+        {
+          ...(fullName && { fullName: fullName.trim() }),
+          ...(businessName !== undefined && { businessName }),
+          ...(bio !== undefined && { bio }),
+          ...(avatarUrl !== undefined && { avatarUrl }),
+          ...(experienceYears !== undefined && { experienceYears: parseInt(experienceYears, 10) }),
+          ...(parsedSkills !== undefined && { skills: parsedSkills }),
+          ...(primaryCategory !== undefined && { primaryCategory }),
+          ...(city !== undefined && { city }),
+          ...(area !== undefined && { area }),
+          ...(servicePincode !== undefined && { servicePincode }),
+          ...(serviceRadiusKm !== undefined && { serviceRadiusKm: parseFloat(serviceRadiusKm) }),
+        },
+        { upsert: true, new: true }
+      );
+    } else if (user.role === 'SHOP_OWNER') {
+      await ShopProfile.findOneAndUpdate(
+        { userId: user._id },
+        {
+          ...(shopName && { shopName }),
+          ...(fullName && { ownerName: fullName }),
+          ...(shopCategory && { shopCategory }),
+          ...(address && { address }),
+          ...(streetAddress && { streetAddress }),
+          ...(pincode && { pincode }),
+          ...(city && { city }),
+          ...(area && { area }),
+          ...(avatarUrl && { bannerUrl: avatarUrl }),
+        },
+        { upsert: true, new: true }
+      );
     }
 
-    const count = await prisma.address.count({ where: { userId: req.user.id } });
+    await logAuditEvent(req, 'PROFILE_UPDATED', {}, user._id);
+
+    const updatedUser = await User.findById(user._id)
+      .populate('customerProfile')
+      .populate('providerProfile')
+      .populate('shopProfile')
+      .populate('adminProfile')
+      .populate('addresses');
+
+    return successResponse(res, 'Profile updated successfully', updatedUser.toSafeJSON());
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/v1/users/me/addresses (or /api/v1/users/addresses)
+ */
+export const getAddresses = async (req, res, next) => {
+  try {
+    const addresses = await Address.find({ userId: req.user._id }).sort({
+      isDefault: -1,
+      createdAt: -1,
+    });
+    return successResponse(res, 'User addresses retrieved', addresses);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/v1/users/me/addresses (or /api/v1/users/addresses)
+ */
+export const addAddress = async (req, res, next) => {
+  try {
+    const {
+      label = 'Home',
+      addressLine,
+      streetAddress,
+      landmark = '',
+      area = '',
+      city,
+      state,
+      pincode,
+      country = 'India',
+      isDefault = false,
+    } = req.body;
+
+    const finalAddressLine = (addressLine || streetAddress || '').trim();
+
+    if (!finalAddressLine || !city || !state || !pincode) {
+      return errorResponse(res, 'Address line, city, state, and PIN code are required', 400);
+    }
+
+    const count = await Address.countDocuments({ userId: req.user._id });
     const shouldBeDefault = isDefault || count === 0;
 
-    const address = await prisma.$transaction(async (tx) => {
-      if (shouldBeDefault) {
-        await tx.address.updateMany({
-          where: { userId: req.user.id },
-          data: { isDefault: false },
-        });
-      }
+    if (shouldBeDefault) {
+      await Address.updateMany({ userId: req.user._id }, { isDefault: false });
+    }
 
-      return tx.address.create({
-        data: {
-          userId: req.user.id,
-          label,
-          streetAddress,
-          city,
-          state,
-          pincode,
-          latitude: latitude ? parseFloat(latitude) : null,
-          longitude: longitude ? parseFloat(longitude) : null,
-          isDefault: shouldBeDefault,
-        },
-      });
+    const address = await Address.create({
+      userId: req.user._id,
+      label,
+      addressLine: finalAddressLine,
+      landmark: landmark.trim(),
+      area: area.trim(),
+      city: city.trim(),
+      state: state.trim(),
+      pincode: pincode.trim(),
+      country: country.trim(),
+      isDefault: shouldBeDefault,
     });
 
     return successResponse(res, 'Address added successfully', address, 201);
@@ -176,61 +200,88 @@ export const addAddress = async (req, res, next) => {
   }
 };
 
+/**
+ * PATCH /api/v1/users/me/addresses/:id (or /api/v1/users/addresses/:id)
+ */
 export const updateAddress = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { label, streetAddress, city, state, pincode, latitude, longitude, isDefault } = req.body;
+    const {
+      label,
+      addressLine,
+      streetAddress,
+      landmark,
+      area,
+      city,
+      state,
+      pincode,
+      country,
+      isDefault,
+    } = req.body;
 
-    const existing = await prisma.address.findFirst({
-      where: { id, userId: req.user.id },
-    });
-
-    if (!existing) {
+    const address = await Address.findOne({ _id: id, userId: req.user._id });
+    if (!address) {
       return errorResponse(res, 'Address not found or unauthorized', 404);
     }
 
-    const updated = await prisma.$transaction(async (tx) => {
-      if (isDefault) {
-        await tx.address.updateMany({
-          where: { userId: req.user.id },
-          data: { isDefault: false },
-        });
-      }
+    if (isDefault) {
+      await Address.updateMany({ userId: req.user._id }, { isDefault: false });
+    }
 
-      return tx.address.update({
-        where: { id },
-        data: {
-          ...(label && { label }),
-          ...(streetAddress && { streetAddress }),
-          ...(city && { city }),
-          ...(state && { state }),
-          ...(pincode && { pincode }),
-          ...(latitude !== undefined && { latitude: latitude ? parseFloat(latitude) : null }),
-          ...(longitude !== undefined && { longitude: longitude ? parseFloat(longitude) : null }),
-          ...(isDefault !== undefined && { isDefault }),
-        },
-      });
-    });
+    if (label !== undefined) address.label = label;
+    if (addressLine !== undefined || streetAddress !== undefined) {
+      address.addressLine = (addressLine || streetAddress).trim();
+    }
+    if (landmark !== undefined) address.landmark = landmark.trim();
+    if (area !== undefined) address.area = area.trim();
+    if (city !== undefined) address.city = city.trim();
+    if (state !== undefined) address.state = state.trim();
+    if (pincode !== undefined) address.pincode = pincode.trim();
+    if (country !== undefined) address.country = country.trim();
+    if (isDefault !== undefined) address.isDefault = isDefault;
 
-    return successResponse(res, 'Address updated successfully', updated);
+    await address.save();
+
+    return successResponse(res, 'Address updated successfully', address);
   } catch (error) {
     next(error);
   }
 };
 
+/**
+ * DELETE /api/v1/users/me/addresses/:id (or /api/v1/users/addresses/:id)
+ */
 export const deleteAddress = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const existing = await prisma.address.findFirst({
-      where: { id, userId: req.user.id },
-    });
-
-    if (!existing) {
+    const address = await Address.findOneAndDelete({ _id: id, userId: req.user._id });
+    if (!address) {
       return errorResponse(res, 'Address not found or unauthorized', 404);
     }
 
-    await prisma.address.delete({ where: { id } });
+    // If the deleted address was default, promote the newest remaining address
+    if (address.isDefault) {
+      const nextAddress = await Address.findOne({ userId: req.user._id }).sort({ createdAt: -1 });
+      if (nextAddress) {
+        nextAddress.isDefault = true;
+        await nextAddress.save();
+      }
+    }
+
     return successResponse(res, 'Address deleted successfully');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * DELETE /api/v1/users/account
+ */
+export const deleteAccount = async (req, res, next) => {
+  try {
+    await User.findByIdAndUpdate(req.user._id, { accountStatus: 'DISABLED' });
+    await logAuditEvent(req, 'ACCOUNT_DISABLED', {}, req.user._id);
+    return successResponse(res, 'Account has been disabled');
   } catch (error) {
     next(error);
   }
