@@ -8,12 +8,12 @@ pgdata/
 *.log
 
 # Environment variables
-.env.example
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env*.local
+
+# MongoDB temporary cache & backups
+.mongo-cache/
+backups/
 
 # Production build outputs
 dist/
