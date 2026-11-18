@@ -2,15 +2,14 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import app from './app.js';
-import prisma from './config/db.js';
+import { connectDB } from './config/db.js';
 
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {
-    // Verify database connection
-    await prisma.$connect();
-    console.log('✅ PostgreSQL database connected successfully.');
+    // Verify MongoDB database connection
+    await connectDB();
 
     app.listen(PORT, () => {
       console.log(`🚀 SevaSetu Backend Server running on http://localhost:${PORT}`);
