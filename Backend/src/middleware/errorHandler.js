@@ -1,17 +1,34 @@
 import { errorResponse } from '../utils/apiResponse.js';
 
 export const errorHandler = (err, req, res, next) => {
-  console.error('Unhandled Server Error:', err);
-
-  // Prisma unique constraint violation
-  if (err.code === 'P2002') {
-    const target = err.meta?.target ? err.meta.target.join(', ') : 'field';
-    return errorResponse(res, `A record with this ${target} already exists.`, 409);
+  // Safe logging in dev / prod
+  if (process.env.NODE_ENV !== 'test') {
+    console.error(`[Error] ${req.method} ${req.originalUrl}:`, err.message || err);
   }
 
-  // Prisma record not found
-  if (err.code === 'P2025') {
-    return errorResponse(res, 'Requested resource not found.', 404);
+  // Mongoose duplicate key error (11000)
+  if (err.code === 11000) {
+    const fields = Object.keys(err.keyValue || {}).join(', ');
+    return errorResponse(res, `A record with this ${fields || 'value'} already exists.`, 409);
+  }
+
+  // Mongoose ValidationError
+  if (err.name === 'ValidationError') {
+    const errors = Object.values(err.errors || {}).map((e) => e.message);
+    return errorResponse(res, errors.join(', ') || 'Validation error', 400);
+  }
+
+  // Mongoose CastError (invalid ObjectId)
+  if (err.name === 'CastError') {
+    return errorResponse(res, `Invalid ID format for parameter: ${err.path}`, 400);
+  }
+
+  // JSON Web Token errors
+  if (err.name === 'JsonWebTokenError') {
+    return errorResponse(res, 'Invalid authentication token', 401);
+  }
+  if (err.name === 'TokenExpiredError') {
+    return errorResponse(res, 'Authentication token has expired', 401);
   }
 
   // Multer error
@@ -19,8 +36,10 @@ export const errorHandler = (err, req, res, next) => {
     return errorResponse(res, `Upload error: ${err.message}`, 400);
   }
 
-  const statusCode = err.statusCode || 500;
-  const message = err.message || 'Internal server error';
+  const statusCode = err.statusCode || (err.status && typeof err.status === 'number' ? err.status : 500);
+  const message = statusCode === 500 && process.env.NODE_ENV === 'production'
+    ? 'Internal server error'
+    : err.message || 'Internal server error';
 
   return errorResponse(res, message, statusCode);
 };

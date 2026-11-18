@@ -9,7 +9,9 @@
     "dev:server": "npm --prefix Backend run dev",
     "dev:client": "npm --prefix Frontend run dev",
     "build:client": "npm --prefix Frontend run build",
-    "seed": "npm --prefix Backend run prisma:seed",
+    "seed": "npm --prefix Backend run seed",
+    "migrate": "npm --prefix Backend run migrate",
+    "verify": "npm --prefix Backend run verify",
     "test": "npm --prefix Backend test"
   },
   "keywords": [
