@@ -13,7 +13,7 @@ export default function ProviderBookings() {
     try {
       const url = activeTab === 'ALL' ? '/bookings' : `/bookings?status=${activeTab}`;
       const res = await api.get(url);
-      setBookings(res.data || []);
+      setBookings(Array.isArray(res.data) ? res.data : (res.data?.bookings || []));
     } catch (err) {
       console.error('Failed to load bookings:', err);
     } finally {

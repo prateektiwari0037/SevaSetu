@@ -1,5 +1,35 @@
 import mongoose from 'mongoose';
 
+const availabilityDaySchema = new mongoose.Schema(
+  {
+    day: {
+      type: String,
+      enum: ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'],
+      required: true,
+    },
+    isWorking: {
+      type: Boolean,
+      default: true,
+    },
+    startTime: {
+      type: String,
+      default: '09:00',
+    },
+    endTime: {
+      type: String,
+      default: '18:00',
+    },
+    breaks: [
+      {
+        startTime: String,
+        endTime: String,
+        reason: { type: String, default: 'Break' },
+      },
+    ],
+  },
+  { _id: false }
+);
+
 const providerProfileSchema = new mongoose.Schema(
   {
     userId: {
@@ -12,6 +42,7 @@ const providerProfileSchema = new mongoose.Schema(
     fullName: {
       type: String,
       trim: true,
+      default: '',
     },
     businessName: {
       type: String,
@@ -43,6 +74,18 @@ const providerProfileSchema = new mongoose.Schema(
       trim: true,
       default: null,
     },
+    categoryIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Category',
+      },
+    ],
+    serviceIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Service',
+      },
+    ],
     city: {
       type: String,
       trim: true,
@@ -61,10 +104,11 @@ const providerProfileSchema = new mongoose.Schema(
       default: '400001',
       index: true,
     },
-    serviceRadiusAreas: [
+    serviceAreas: [
       {
-        type: String,
-        trim: true,
+        pincode: { type: String, trim: true },
+        area: { type: String, trim: true },
+        city: { type: String, trim: true },
       },
     ],
     serviceRadiusKm: {
@@ -73,9 +117,13 @@ const providerProfileSchema = new mongoose.Schema(
     },
     verificationStatus: {
       type: String,
-      enum: ['PENDING_VERIFICATION', 'PENDING', 'APPROVED', 'REJECTED', 'SUSPENDED'],
-      default: 'PENDING_VERIFICATION',
+      enum: ['DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'SUSPENDED', 'PENDING_VERIFICATION'],
+      default: 'DRAFT',
       index: true,
+    },
+    verificationNotes: {
+      type: String,
+      default: '',
     },
     isAvailable: {
       type: Boolean,
@@ -98,10 +146,57 @@ const providerProfileSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    portfolioImages: [
+      {
+        url: { type: String, required: true },
+        description: { type: String, default: '' },
+        order: { type: Number, default: 0 },
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
+    availability: {
+      weeklySchedule: {
+        type: [availabilityDaySchema],
+        default: () => [
+          { day: 'MONDAY', isWorking: true, startTime: '09:00', endTime: '18:00', breaks: [{ startTime: '13:00', endTime: '14:00', reason: 'Lunch' }] },
+          { day: 'TUESDAY', isWorking: true, startTime: '09:00', endTime: '18:00', breaks: [{ startTime: '13:00', endTime: '14:00', reason: 'Lunch' }] },
+          { day: 'WEDNESDAY', isWorking: true, startTime: '09:00', endTime: '18:00', breaks: [{ startTime: '13:00', endTime: '14:00', reason: 'Lunch' }] },
+          { day: 'THURSDAY', isWorking: true, startTime: '09:00', endTime: '18:00', breaks: [{ startTime: '13:00', endTime: '14:00', reason: 'Lunch' }] },
+          { day: 'FRIDAY', isWorking: true, startTime: '09:00', endTime: '18:00', breaks: [{ startTime: '13:00', endTime: '14:00', reason: 'Lunch' }] },
+          { day: 'SATURDAY', isWorking: true, startTime: '10:00', endTime: '17:00', breaks: [] },
+          { day: 'SUNDAY', isWorking: false, startTime: '09:00', endTime: '18:00', breaks: [] },
+        ],
+      },
+      unavailableDates: [
+        {
+          type: Date,
+        },
+      ],
+      timeOffBlocks: [
+        {
+          startDate: { type: Date, required: true },
+          endDate: { type: Date, required: true },
+          reason: { type: String, default: 'Personal Leave' },
+        },
+      ],
+    },
     documents: [
       {
-        documentType: { type: String, enum: ['AADHAAR', 'PAN', 'CERTIFICATE', 'OTHER'] },
-        documentUrl: String,
+        documentType: {
+          type: String,
+          enum: ['ID_PROOF', 'ADDRESS_PROOF', 'TRADE_CERTIFICATE', 'POLICE_VERIFICATION', 'AADHAAR', 'PAN', 'CERTIFICATE', 'OTHER'],
+          required: true,
+        },
+        documentUrl: { type: String, required: true },
+        originalName: { type: String, default: '' },
+        mimeType: { type: String, default: '' },
+        size: { type: Number, default: 0 },
+        status: {
+          type: String,
+          enum: ['PENDING', 'APPROVED', 'REJECTED'],
+          default: 'PENDING',
+        },
+        rejectionReason: { type: String, default: '' },
         verified: { type: Boolean, default: false },
         uploadedAt: { type: Date, default: Date.now },
       },
@@ -119,6 +214,12 @@ providerProfileSchema.virtual('user', {
   localField: 'userId',
   foreignField: '_id',
   justOne: true,
+});
+
+providerProfileSchema.virtual('services', {
+  ref: 'ProviderService',
+  localField: '_id',
+  foreignField: 'providerId',
 });
 
 const ProviderProfile =

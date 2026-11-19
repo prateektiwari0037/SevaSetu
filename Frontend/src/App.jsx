@@ -48,6 +48,7 @@ import CustomerSettings from './pages/customer/CustomerSettings';
 
 // Provider Pages
 import ProviderDashboard from './pages/provider/ProviderDashboard';
+import ProviderOnboarding from './pages/provider/ProviderOnboarding';
 import ProviderBookings from './pages/provider/ProviderBookings';
 import ProviderBookingDetails from './pages/provider/ProviderBookingDetails';
 import ProviderQuotations from './pages/provider/ProviderQuotations';
@@ -57,6 +58,7 @@ import ProviderAvailability from './pages/provider/ProviderAvailability';
 import ProviderEarnings from './pages/provider/ProviderEarnings';
 import ProviderVerification from './pages/provider/ProviderVerification';
 import ProviderReviews from './pages/provider/ProviderReviews';
+import ProviderNotifications from './pages/provider/ProviderNotifications';
 import ProviderProfile from './pages/provider/ProviderProfile';
 import ProviderSettings from './pages/provider/ProviderSettings';
 
@@ -163,15 +165,18 @@ export default function App() {
       >
         <Route index element={<Navigate to="/provider/dashboard" replace />} />
         <Route path="dashboard" element={<ProviderDashboard />} />
+        <Route path="onboarding" element={<ProviderOnboarding />} />
         <Route path="bookings" element={<ProviderBookings />} />
         <Route path="bookings/:id" element={<ProviderBookingDetails />} />
         <Route path="quotations" element={<ProviderQuotations />} />
         <Route path="services" element={<ProviderServices />} />
         <Route path="services/add" element={<AddProviderService />} />
+        <Route path="services/new" element={<AddProviderService />} />
         <Route path="availability" element={<ProviderAvailability />} />
         <Route path="earnings" element={<ProviderEarnings />} />
         <Route path="verification" element={<ProviderVerification />} />
         <Route path="reviews" element={<ProviderReviews />} />
+        <Route path="notifications" element={<ProviderNotifications />} />
         <Route path="profile" element={<ProviderProfile />} />
         <Route path="settings" element={<ProviderSettings />} />
       </Route>

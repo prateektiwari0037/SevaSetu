@@ -33,8 +33,8 @@ export default function ProviderDashboard() {
         api.get('/service-requests?status=OPEN'),
       ]);
       setProfile(profRes.data);
-      setBookings(bookRes.data || []);
-      setEarnings(earnRes.data || { totalEarnings: 0 });
+      setBookings(Array.isArray(bookRes.data) ? bookRes.data : (bookRes.data?.bookings || []));
+      setEarnings(earnRes.data?.summary || earnRes.data || { totalEarnings: 0 });
       setOpenRequests(reqRes.data || []);
     } catch (err) {
       console.error('Failed to load provider dashboard:', err);
