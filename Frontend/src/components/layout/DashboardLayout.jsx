@@ -12,6 +12,7 @@ import {
   Heart,
   LifeBuoy,
   User,
+  UserCheck,
   Settings,
   Briefcase,
   DollarSign,
@@ -61,6 +62,7 @@ export default function DashboardLayout() {
 
   const providerLinks = [
     { name: 'Dashboard', path: '/provider/dashboard', icon: LayoutDashboard },
+    { name: 'Onboarding Setup', path: '/provider/onboarding', icon: UserCheck },
     { name: 'Booking Requests', path: '/provider/bookings', icon: CalendarCheck },
     { name: 'Multiple Quotations', path: '/provider/quotations', icon: FileText },
     { name: 'My Services', path: '/provider/services', icon: Briefcase },
@@ -69,6 +71,7 @@ export default function DashboardLayout() {
     { name: 'Earnings & Payouts', path: '/provider/earnings', icon: DollarSign },
     { name: 'Verification Desk', path: '/provider/verification', icon: ShieldCheck },
     { name: 'Customer Reviews', path: '/provider/reviews', icon: Star },
+    { name: 'Notifications', path: '/provider/notifications', icon: Bell },
     { name: 'Provider Profile', path: '/provider/profile', icon: User },
     { name: 'Settings', path: '/provider/settings', icon: Settings },
   ];

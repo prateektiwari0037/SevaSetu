@@ -1,44 +1,44 @@
-import prisma from '../../config/db.js';
+import { Service, Category, ProviderService } from '../../models/index.js';
 import { successResponse, errorResponse } from '../../utils/apiResponse.js';
 
 export const getServices = async (req, res, next) => {
   try {
-    const { categoryId, categorySlug, search, priceType, minPrice, maxPrice } = req.query;
+    const { categoryId, categorySlug, search, minPrice, maxPrice } = req.query;
 
-    const where = {
-      isActive: true,
-      ...(categoryId && { categoryId }),
-      ...(categorySlug && { category: { slug: categorySlug } }),
-      ...(priceType && { priceType }),
-      ...(minPrice || maxPrice
-        ? {
-            basePrice: {
-              ...(minPrice && { gte: parseFloat(minPrice) }),
-              ...(maxPrice && { lte: parseFloat(maxPrice) }),
-            },
-          }
-        : {}),
-      ...(search && {
-        OR: [
-          { name: { contains: search, mode: 'insensitive' } },
-          { description: { contains: search, mode: 'insensitive' } },
-          { category: { name: { contains: search, mode: 'insensitive' } } },
-        ],
-      }),
-    };
+    const filter = { isActive: true };
 
-    const services = await prisma.service.findMany({
-      where,
-      include: {
-        category: true,
-        _count: {
-          select: { providerServices: true },
-        },
-      },
-      orderBy: { name: 'asc' },
-    });
+    if (categoryId) {
+      filter.categoryId = categoryId;
+    } else if (categorySlug) {
+      const cat = await Category.findOne({ slug: categorySlug });
+      if (cat) filter.categoryId = cat._id;
+    }
 
-    return successResponse(res, 'Services retrieved', services);
+    if (minPrice || maxPrice) {
+      filter.basePrice = {};
+      if (minPrice) filter.basePrice.$gte = parseFloat(minPrice);
+      if (maxPrice) filter.basePrice.$lte = parseFloat(maxPrice);
+    }
+
+    if (search) {
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const services = await Service.find(filter)
+      .populate('categoryId', 'name slug iconUrl')
+      .sort({ name: 1 })
+      .lean();
+
+    const formatted = services.map((s) => ({
+      ...s,
+      id: s._id.toString(),
+      category: s.categoryId,
+    }));
+
+    return successResponse(res, 'Services retrieved', formatted);
   } catch (error) {
     next(error);
   }
@@ -47,31 +47,33 @@ export const getServices = async (req, res, next) => {
 export const getServiceByIdOrSlug = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const service = await prisma.service.findFirst({
-      where: {
-        OR: [{ id }, { slug: id }],
-      },
-      include: {
-        category: true,
-        providerServices: {
-          where: {
-            isActive: true,
-            provider: { verificationStatus: 'APPROVED', isAvailable: true },
-          },
-          include: {
-            provider: {
-              include: {
-                user: { select: { id: true, email: true, phone: true } },
-              },
-            },
-          },
-        },
-      },
-    });
+    let service = null;
+
+    if (id.match(/^[0-9a-fA-F]{24}$/)) {
+      service = await Service.findById(id).populate('categoryId').lean();
+    }
+    if (!service) {
+      service = await Service.findOne({ slug: id }).populate('categoryId').lean();
+    }
 
     if (!service) {
       return errorResponse(res, 'Service not found', 404);
     }
+
+    const providerServices = await ProviderService.find({
+      serviceId: service._id,
+      isActive: true,
+    })
+      .populate({
+        path: 'providerId',
+        match: { verificationStatus: 'APPROVED', isAvailable: true },
+        populate: { path: 'userId', select: 'fullName email phone' },
+      })
+      .lean();
+
+    service.id = service._id.toString();
+    service.category = service.categoryId;
+    service.providerServices = providerServices.filter((ps) => ps.providerId);
 
     return successResponse(res, 'Service details retrieved', service);
   } catch (error) {
@@ -81,44 +83,34 @@ export const getServiceByIdOrSlug = async (req, res, next) => {
 
 export const searchServices = async (req, res, next) => {
   try {
-    const { q, category, pincode, sortBy = 'rating' } = req.query;
+    const { q, category } = req.query;
+    const filter = { isActive: true };
 
-    const where = {
-      isActive: true,
-      ...(category && {
-        category: {
-          OR: [{ id: category }, { slug: category }, { name: { contains: category, mode: 'insensitive' } }],
-        },
-      }),
-      ...(q && {
-        OR: [
-          { name: { contains: q, mode: 'insensitive' } },
-          { description: { contains: q, mode: 'insensitive' } },
-          { category: { name: { contains: q, mode: 'insensitive' } } },
-        ],
-      }),
-    };
+    if (category) {
+      const cat = await Category.findOne({
+        $or: [{ _id: category.match(/^[0-9a-fA-F]{24}$/) ? category : null }, { slug: category }, { name: { $regex: category, $options: 'i' } }],
+      });
+      if (cat) filter.categoryId = cat._id;
+    }
 
-    const services = await prisma.service.findMany({
-      where,
-      include: {
-        category: true,
-        providerServices: {
-          where: {
-            isActive: true,
-            provider: {
-              verificationStatus: 'APPROVED',
-              ...(pincode && { servicePincode: pincode }),
-            },
-          },
-          include: {
-            provider: true,
-          },
-        },
-      },
-    });
+    if (q) {
+      filter.$or = [
+        { name: { $regex: q, $options: 'i' } },
+        { description: { $regex: q, $options: 'i' } },
+      ];
+    }
 
-    return successResponse(res, 'Search results', services);
+    const services = await Service.find(filter)
+      .populate('categoryId', 'name slug iconUrl')
+      .lean();
+
+    const formatted = services.map((s) => ({
+      ...s,
+      id: s._id.toString(),
+      category: s.categoryId,
+    }));
+
+    return successResponse(res, 'Search results', formatted);
   } catch (error) {
     next(error);
   }
@@ -132,9 +124,9 @@ export const createService = async (req, res, next) => {
       slug,
       description,
       basePrice,
-      priceType = 'FIXED',
-      estimatedDurationMinutes = 60,
-      warrantyDays = 30,
+      durationMinutes = 60,
+      inclusions = [],
+      exclusions = [],
       imageUrl,
       isActive = true,
     } = req.body;
@@ -143,20 +135,23 @@ export const createService = async (req, res, next) => {
       return errorResponse(res, 'Category ID, name, and slug are required', 400);
     }
 
-    const service = await prisma.service.create({
-      data: {
-        categoryId,
-        name,
-        slug: slug.toLowerCase().trim().replace(/\s+/g, '-'),
-        description,
-        basePrice: parseFloat(basePrice) || 0,
-        priceType,
-        estimatedDurationMinutes: parseInt(estimatedDurationMinutes) || 60,
-        warrantyDays: parseInt(warrantyDays) || 30,
-        imageUrl,
-        isActive,
-      },
-      include: { category: true },
+    const formattedSlug = slug.toLowerCase().trim().replace(/\s+/g, '-');
+    const existing = await Service.findOne({ slug: formattedSlug });
+    if (existing) {
+      return errorResponse(res, 'Service with this slug already exists', 409);
+    }
+
+    const service = await Service.create({
+      categoryId,
+      name,
+      slug: formattedSlug,
+      description,
+      basePrice: parseFloat(basePrice) || 0,
+      durationMinutes: parseInt(durationMinutes) || 60,
+      inclusions,
+      exclusions,
+      imageUrl,
+      isActive,
     });
 
     return successResponse(res, 'Service created successfully', service, 201);
@@ -174,31 +169,29 @@ export const updateService = async (req, res, next) => {
       slug,
       description,
       basePrice,
-      priceType,
-      estimatedDurationMinutes,
-      warrantyDays,
+      durationMinutes,
+      inclusions,
+      exclusions,
       imageUrl,
       isActive,
     } = req.body;
 
-    const service = await prisma.service.update({
-      where: { id },
-      data: {
-        ...(categoryId && { categoryId }),
-        ...(name && { name }),
-        ...(slug && { slug: slug.toLowerCase().trim().replace(/\s+/g, '-') }),
-        ...(description !== undefined && { description }),
-        ...(basePrice !== undefined && { basePrice: parseFloat(basePrice) }),
-        ...(priceType && { priceType }),
-        ...(estimatedDurationMinutes !== undefined && {
-          estimatedDurationMinutes: parseInt(estimatedDurationMinutes),
-        }),
-        ...(warrantyDays !== undefined && { warrantyDays: parseInt(warrantyDays) }),
-        ...(imageUrl !== undefined && { imageUrl }),
-        ...(isActive !== undefined && { isActive }),
-      },
-      include: { category: true },
-    });
+    const updateData = {};
+    if (categoryId) updateData.categoryId = categoryId;
+    if (name) updateData.name = name;
+    if (slug) updateData.slug = slug.toLowerCase().trim().replace(/\s+/g, '-');
+    if (description !== undefined) updateData.description = description;
+    if (basePrice !== undefined) updateData.basePrice = parseFloat(basePrice);
+    if (durationMinutes !== undefined) updateData.durationMinutes = parseInt(durationMinutes);
+    if (inclusions !== undefined) updateData.inclusions = inclusions;
+    if (exclusions !== undefined) updateData.exclusions = exclusions;
+    if (imageUrl !== undefined) updateData.imageUrl = imageUrl;
+    if (isActive !== undefined) updateData.isActive = isActive;
+
+    const service = await Service.findByIdAndUpdate(id, updateData, { new: true });
+    if (!service) {
+      return errorResponse(res, 'Service not found', 404);
+    }
 
     return successResponse(res, 'Service updated successfully', service);
   } catch (error) {
@@ -209,7 +202,10 @@ export const updateService = async (req, res, next) => {
 export const deleteService = async (req, res, next) => {
   try {
     const { id } = req.params;
-    await prisma.service.delete({ where: { id } });
+    const service = await Service.findByIdAndDelete(id);
+    if (!service) {
+      return errorResponse(res, 'Service not found', 404);
+    }
     return successResponse(res, 'Service deleted successfully');
   } catch (error) {
     next(error);

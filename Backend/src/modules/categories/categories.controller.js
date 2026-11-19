@@ -1,22 +1,34 @@
-import prisma from '../../config/db.js';
+import { Category, Service } from '../../models/index.js';
 import { successResponse, errorResponse } from '../../utils/apiResponse.js';
 
 export const getCategories = async (req, res, next) => {
   try {
     const { includeInactive } = req.query;
-    const where = includeInactive === 'true' ? {} : { isActive: true };
+    const filter = includeInactive === 'true' ? {} : { isActive: true };
 
-    const categories = await prisma.category.findMany({
-      where,
-      include: {
-        _count: {
-          select: { services: true },
-        },
-      },
-      orderBy: { displayOrder: 'asc' },
+    const categories = await Category.find(filter).sort({ displayOrder: 1 }).lean();
+
+    // Map service counts
+    const categoryIds = categories.map((c) => c._id);
+    const serviceCounts = await Service.aggregate([
+      { $match: { categoryId: { $in: categoryIds }, isActive: true } },
+      { $group: { _id: '$categoryId', count: { $sum: 1 } } },
+    ]);
+
+    const countMap = {};
+    serviceCounts.forEach((s) => {
+      countMap[s._id.toString()] = s.count;
     });
 
-    return successResponse(res, 'Categories retrieved', categories);
+    const enriched = categories.map((c) => ({
+      ...c,
+      id: c._id.toString(),
+      _count: {
+        services: countMap[c._id.toString()] || 0,
+      },
+    }));
+
+    return successResponse(res, 'Categories retrieved', enriched);
   } catch (error) {
     next(error);
   }
@@ -25,25 +37,29 @@ export const getCategories = async (req, res, next) => {
 export const getCategoryByIdOrSlug = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const category = await prisma.category.findFirst({
-      where: {
-        OR: [{ id }, { slug: id }],
-      },
-      include: {
-        services: {
-          where: { isActive: true },
-          include: {
-            _count: {
-              select: { providerServices: true },
-            },
-          },
-        },
-      },
-    });
+    let category = null;
+
+    if (id.match(/^[0-9a-fA-F]{24}$/)) {
+      category = await Category.findById(id).lean();
+    }
+    if (!category) {
+      category = await Category.findOne({ slug: id }).lean();
+    }
 
     if (!category) {
       return errorResponse(res, 'Category not found', 404);
     }
+
+    const services = await Service.find({
+      categoryId: category._id,
+      isActive: true,
+    }).lean();
+
+    category.id = category._id.toString();
+    category.services = services.map((s) => ({
+      ...s,
+      id: s._id.toString(),
+    }));
 
     return successResponse(res, 'Category details retrieved', category);
   } catch (error) {
@@ -58,16 +74,20 @@ export const createCategory = async (req, res, next) => {
       return errorResponse(res, 'Category name and slug are required', 400);
     }
 
-    const category = await prisma.category.create({
-      data: {
-        name,
-        slug: slug.toLowerCase().trim().replace(/\s+/g, '-'),
-        description,
-        iconUrl,
-        imageUrl,
-        displayOrder: displayOrder ? parseInt(displayOrder) : 0,
-        isActive: isActive !== undefined ? isActive : true,
-      },
+    const formattedSlug = slug.toLowerCase().trim().replace(/\s+/g, '-');
+    const existing = await Category.findOne({ slug: formattedSlug });
+    if (existing) {
+      return errorResponse(res, 'Category with this slug already exists', 409);
+    }
+
+    const category = await Category.create({
+      name,
+      slug: formattedSlug,
+      description,
+      iconUrl,
+      imageUrl,
+      displayOrder: displayOrder ? parseInt(displayOrder) : 0,
+      isActive: isActive !== undefined ? isActive : true,
     });
 
     return successResponse(res, 'Category created successfully', category, 201);
@@ -81,18 +101,19 @@ export const updateCategory = async (req, res, next) => {
     const { id } = req.params;
     const { name, slug, description, iconUrl, imageUrl, displayOrder, isActive } = req.body;
 
-    const category = await prisma.category.update({
-      where: { id },
-      data: {
-        ...(name && { name }),
-        ...(slug && { slug: slug.toLowerCase().trim().replace(/\s+/g, '-') }),
-        ...(description !== undefined && { description }),
-        ...(iconUrl !== undefined && { iconUrl }),
-        ...(imageUrl !== undefined && { imageUrl }),
-        ...(displayOrder !== undefined && { displayOrder: parseInt(displayOrder) }),
-        ...(isActive !== undefined && { isActive }),
-      },
-    });
+    const updateData = {};
+    if (name) updateData.name = name;
+    if (slug) updateData.slug = slug.toLowerCase().trim().replace(/\s+/g, '-');
+    if (description !== undefined) updateData.description = description;
+    if (iconUrl !== undefined) updateData.iconUrl = iconUrl;
+    if (imageUrl !== undefined) updateData.imageUrl = imageUrl;
+    if (displayOrder !== undefined) updateData.displayOrder = parseInt(displayOrder);
+    if (isActive !== undefined) updateData.isActive = isActive;
+
+    const category = await Category.findByIdAndUpdate(id, updateData, { new: true });
+    if (!category) {
+      return errorResponse(res, 'Category not found', 404);
+    }
 
     return successResponse(res, 'Category updated successfully', category);
   } catch (error) {
@@ -103,7 +124,10 @@ export const updateCategory = async (req, res, next) => {
 export const deleteCategory = async (req, res, next) => {
   try {
     const { id } = req.params;
-    await prisma.category.delete({ where: { id } });
+    const category = await Category.findByIdAndDelete(id);
+    if (!category) {
+      return errorResponse(res, 'Category not found', 404);
+    }
     return successResponse(res, 'Category deleted successfully');
   } catch (error) {
     next(error);

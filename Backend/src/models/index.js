@@ -1,6 +1,7 @@
 import User from './User.js';
 import CustomerProfile from './CustomerProfile.js';
 import ProviderProfile from './ProviderProfile.js';
+import ProviderService from './ProviderService.js';
 import ShopProfile from './ShopProfile.js';
 import AdminProfile from './AdminProfile.js';
 import Address from './Address.js';
@@ -19,6 +20,7 @@ export {
   User,
   CustomerProfile,
   ProviderProfile,
+  ProviderService,
   ShopProfile,
   AdminProfile,
   Address,

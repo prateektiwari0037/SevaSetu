@@ -13,7 +13,7 @@ export async function connectDB(uri = process.env.MONGODB_URI) {
   try {
     // Attempt standard connection
     await mongoose.connect(mongoUri, {
-      serverSelectionTimeoutMS: 2000,
+      serverSelectionTimeoutMS: 10000,
       autoIndex: true,
     });
     console.log(`✅ MongoDB connected successfully to ${mongoUri}`);
