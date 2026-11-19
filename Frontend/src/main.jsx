@@ -5,6 +5,7 @@ import App from './App';
 import { LanguageProvider } from './context/LanguageContext';
 import { AuthProvider } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
+import { ToastProvider } from './context/ToastContext';
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -13,7 +14,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       <LanguageProvider>
         <AuthProvider>
           <NotificationProvider>
-            <App />
+            <ToastProvider>
+              <App />
+            </ToastProvider>
           </NotificationProvider>
         </AuthProvider>
       </LanguageProvider>

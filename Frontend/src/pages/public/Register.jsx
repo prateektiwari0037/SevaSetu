@@ -3,12 +3,23 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Wrench, ShieldCheck, Store, User, ArrowRight, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
+/** Client-side checks mirroring the backend rules (min 8-char password, required contact fields). */
+export const validateRegistration = ({ fullName, email, phone, password, confirmPassword }) => {
+  if (!fullName.trim() || fullName.trim().length < 2) return 'Please enter your full name';
+  if (!/^\S+@\S+\.\S+$/.test(email.trim())) return 'Please enter a valid email address';
+  if (!/^(\+91[-\s]?)?[6-9]\d{9}$/.test(phone.replace(/\s/g, ''))) return 'Please enter a valid 10-digit Indian mobile number';
+  if (password.length < 8) return 'Password must be at least 8 characters long';
+  if (password !== confirmPassword) return 'Password and confirm password do not match';
+  return '';
+};
+
 export default function Register() {
   const [role, setRole] = useState('CUSTOMER');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   // Provider specific
   const [businessName, setBusinessName] = useState('');
@@ -32,16 +43,22 @@ export default function Register() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const validationError = validateRegistration({ fullName, email, phone, password, confirmPassword });
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
     setError('');
     setSubmitting(true);
 
     try {
       const payload = {
         role,
-        fullName,
-        email,
-        phone,
+        fullName: fullName.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
         password,
+        confirmPassword,
         ...(role === 'PROVIDER' && {
           businessName,
           primaryCategory,
@@ -126,16 +143,18 @@ export default function Register() {
         </div>
 
         {error && (
-          <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center">
+          <div role="alert" className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center">
             <AlertCircle className="w-4 h-4 mr-2 text-red-600 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+        <form onSubmit={handleSubmit} noValidate aria-label="Registration form" className="space-y-4 text-xs">
           <div>
-            <label className="block font-semibold text-slate-700 mb-1">Full Legal Name *</label>
+            <label htmlFor="reg-fullname" className="block font-semibold text-slate-700 mb-1">Full Legal Name *</label>
             <input
+              id="reg-fullname"
+              autoComplete="name"
               type="text"
               required
               value={fullName}
@@ -147,8 +166,10 @@ export default function Register() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Email Address *</label>
+              <label htmlFor="reg-email" className="block font-semibold text-slate-700 mb-1">Email Address *</label>
               <input
+                id="reg-email"
+                autoComplete="email"
                 type="email"
                 required
                 value={email}
@@ -158,8 +179,10 @@ export default function Register() {
               />
             </div>
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Mobile Phone *</label>
+              <label htmlFor="reg-phone" className="block font-semibold text-slate-700 mb-1">Mobile Phone *</label>
               <input
+                id="reg-phone"
+                autoComplete="tel"
                 type="tel"
                 required
                 value={phone}
@@ -170,17 +193,39 @@ export default function Register() {
             </div>
           </div>
 
-          <div>
-            <label className="block font-semibold text-slate-700 mb-1">Create Password (min 6 chars) *</label>
-            <input
-              type="password"
-              required
-              minLength={6}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-primary-500"
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="reg-password" className="block font-semibold text-slate-700 mb-1">
+                Create Password (min 8 chars) *
+              </label>
+              <input
+                id="reg-password"
+                type="password"
+                required
+                minLength={8}
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
+            </div>
+            <div>
+              <label htmlFor="reg-confirm-password" className="block font-semibold text-slate-700 mb-1">
+                Confirm Password *
+              </label>
+              <input
+                id="reg-confirm-password"
+                type="password"
+                required
+                minLength={8}
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
+            </div>
           </div>
 
           {/* Dynamic Provider Fields */}

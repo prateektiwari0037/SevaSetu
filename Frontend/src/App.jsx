@@ -1,9 +1,12 @@
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
 // Layouts
 import PublicLayout from './components/layout/PublicLayout';
 import DashboardLayout from './components/layout/DashboardLayout';
+
+// Customer module providers
+import { FavoritesProvider } from './context/FavoritesContext';
 
 // Route Guards
 import { PublicRoute } from './routes/PublicRoute';
@@ -45,6 +48,10 @@ import CustomerComplaints from './pages/customer/CustomerComplaints';
 import CustomerSupport from './pages/customer/CustomerSupport';
 import CustomerProfile from './pages/customer/CustomerProfile';
 import CustomerSettings from './pages/customer/CustomerSettings';
+import CustomerServices from './pages/customer/CustomerServices';
+import CustomerServiceDetail from './pages/customer/CustomerServiceDetail';
+import CustomerProviders from './pages/customer/CustomerProviders';
+import CustomerProviderDetail from './pages/customer/CustomerProviderDetail';
 
 // Provider Pages
 import ProviderDashboard from './pages/provider/ProviderDashboard';
@@ -85,6 +92,16 @@ import AdminPayments from './pages/admin/AdminPayments';
 import AdminSubscriptions from './pages/admin/AdminSubscriptions';
 import AdminReports from './pages/admin/AdminReports';
 import AdminSettings from './pages/admin/AdminSettings';
+
+/** /customer/book-service?serviceId=X&providerId=Y -> /customer/book/X?providerId=Y */
+function LegacyBookRedirect() {
+  const { search } = useLocation();
+  const params = new URLSearchParams(search);
+  const serviceId = params.get('serviceId');
+  const providerId = params.get('providerId');
+  const target = serviceId ? `/customer/book/${serviceId}` : '/customer/book';
+  return <Navigate to={providerId ? `${target}?providerId=${providerId}` : target} replace />;
+}
 
 export default function App() {
   return (
@@ -132,16 +149,25 @@ export default function App() {
         path="/customer"
         element={
           <RoleBasedRoute allowedRoles={['CUSTOMER']}>
-            <DashboardLayout />
+            <FavoritesProvider>
+              <DashboardLayout />
+            </FavoritesProvider>
           </RoleBasedRoute>
         }
       >
         <Route index element={<Navigate to="/customer/dashboard" replace />} />
         <Route path="dashboard" element={<CustomerDashboard />} />
+        <Route path="services" element={<CustomerServices />} />
+        <Route path="services/:id" element={<CustomerServiceDetail />} />
+        <Route path="providers" element={<CustomerProviders />} />
+        <Route path="providers/:id" element={<CustomerProviderDetail />} />
         <Route path="bookings" element={<CustomerBookings />} />
         <Route path="bookings/:id" element={<BookingDetails />} />
         <Route path="book" element={<BookService />} />
-        <Route path="quotations" element={<CompareQuotations />} />
+        <Route path="book/:serviceId" element={<BookService />} />
+        {/* Legacy link target kept so existing links keep working */}
+        <Route path="book-service" element={<LegacyBookRedirect />} />
+        <Route path="quotations/:id" element={<CompareQuotations />} />
         <Route path="emergency" element={<EmergencyBooking />} />
         <Route path="addresses" element={<Addresses />} />
         <Route path="favorites" element={<Favorites />} />

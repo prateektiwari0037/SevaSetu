@@ -1,84 +1,127 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Star, MessageSquare } from 'lucide-react';
-import api from '../../services/api';
+import { MessageSquare, Star } from 'lucide-react';
+import { PageHeader, Card, LoadingList, ErrorState, EmptyState, Button, RatingStars, Modal } from '../../components/ui';
+import ReviewForm from '../../components/customer/ReviewForm';
+import useAsync from '../../hooks/useAsync';
+import { useLanguage } from '../../context/LanguageContext';
+import { useToast } from '../../context/ToastContext';
+import { bookingApi, reviewApi } from '../../services/customerApi';
+import { formatDate, getId, providerName } from '../../utils/customer';
+
+/** Completed bookings with an assigned provider and no review yet. */
+export const reviewEligibleBookings = (bookings, reviews) => {
+  const reviewed = new Set(reviews.map((r) => r.bookingId || getId(r.booking)));
+  return bookings.filter(
+    (b) => b.status === 'COMPLETED' && !b.review && (b.providerId || b.provider) && !reviewed.has(getId(b))
+  );
+};
 
 export default function CustomerReviews() {
-  const [reviews, setReviews] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { t } = useLanguage();
+  const toast = useToast();
+  const data = useAsync(
+    async () => {
+      const [bookings, reviews] = await Promise.all([bookingApi.mine({ status: 'COMPLETED' }), reviewApi.mine()]);
+      return { bookings, reviews };
+    },
+    [],
+    { initialData: { bookings: [], reviews: [] } }
+  );
+  const [reviewing, setReviewing] = useState(null);
 
-  useEffect(() => {
-    const fetchReviews = async () => {
-      try {
-        const res = await api.get('/reviews/my-reviews');
-        setReviews(res.data || []);
-      } catch (err) {
-        console.error('Failed to load reviews:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchReviews();
-  }, []);
+  const eligible = useMemo(
+    () => reviewEligibleBookings(data.data?.bookings || [], data.data?.reviews || []),
+    [data.data]
+  );
+  const history = data.data?.reviews || [];
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">My Ratings & Reviews</h1>
-        <p className="text-xs text-slate-500 mt-1">
-          Feedback and ratings you have shared for completed service visits
-        </p>
-      </div>
+      <PageHeader title={t('reviewsTitle')} description="Rate completed services and see the reviews you've written." />
 
-      {loading ? (
-        <div className="text-center py-20 text-xs text-slate-400">Loading reviews...</div>
-      ) : reviews.length === 0 ? (
-        <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 space-y-2">
-          <Star className="w-12 h-12 text-slate-300 mx-auto" />
-          <h3 className="font-bold text-slate-800 text-base">No reviews submitted yet</h3>
-          <p className="text-xs text-slate-400">
-            Reviews can be submitted upon completion of any scheduled booking.
-          </p>
-        </div>
+      {data.loading ? (
+        <LoadingList label="Loading reviews…" />
+      ) : data.error ? (
+        <ErrorState error={data.error} onRetry={data.reload} title="Could not load reviews" />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {reviews.map((rev) => (
-            <div
-              key={rev.id}
-              className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs space-y-3"
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <h4 className="font-bold text-slate-900 text-sm">
-                    {rev.booking?.service?.name || 'Home Service'}
-                  </h4>
-                  <span className="text-[10px] text-slate-400 font-mono">
-                    Booking #{rev.booking?.bookingNumber}
-                  </span>
-                </div>
-                <div className="flex text-amber-400">
-                  {[...Array(rev.rating)].map((_, i) => (
-                    <Star key={i} className="w-3.5 h-3.5 fill-amber-400" />
-                  ))}
-                </div>
-              </div>
+        <>
+          <section aria-labelledby="awaiting-review-heading" className="space-y-3">
+            <h2 id="awaiting-review-heading" className="text-base font-bold text-slate-900">
+              {t('awaitingReview')} <span className="text-slate-400 font-medium">({eligible.length})</span>
+            </h2>
+            {eligible.length === 0 ? (
+              <p className="text-sm text-slate-500">You're all caught up — no completed bookings are waiting for a review.</p>
+            ) : (
+              <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {eligible.map((b) => (
+                  <li key={getId(b)}>
+                    <Card className="p-4 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <Link to={`/customer/bookings/${getId(b)}`} className="text-sm font-bold text-slate-900 hover:text-primary-700">
+                          {b.service?.name}
+                        </Link>
+                        <p className="text-xs text-slate-500 truncate">
+                          {b.provider ? providerName(b.provider) : 'Provider'} · {formatDate(b.completedAt || b.bookingDate)}
+                        </p>
+                      </div>
+                      <Button size="sm" icon={Star} onClick={() => setReviewing(b)}>
+                        {t('leaveReview')}
+                      </Button>
+                    </Card>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-              <p className="text-xs text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-100 leading-relaxed italic">
-                "{rev.comment}"
-              </p>
-
-              {rev.providerReply && (
-                <div className="pl-3 border-l-2 border-primary-500 text-xs">
-                  <span className="text-[10px] font-bold text-primary-800 uppercase block">
-                    Provider Reply:
-                  </span>
-                  <p className="text-slate-600 mt-0.5">{rev.providerReply}</p>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+          <section aria-labelledby="review-history-heading" className="space-y-3">
+            <h2 id="review-history-heading" className="text-base font-bold text-slate-900">
+              {t('reviewHistory')}
+            </h2>
+            {history.length === 0 ? (
+              <EmptyState icon={MessageSquare} title="You haven't written any reviews yet" />
+            ) : (
+              <ul className="space-y-3">
+                {history.map((r) => (
+                  <li key={getId(r)}>
+                    <Card className="p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-bold text-slate-900">{r.booking?.service?.name || 'Service'}</p>
+                          <p className="text-xs text-slate-500">{r.provider ? providerName(r.provider) : ''}</p>
+                        </div>
+                        <span className="text-[11px] text-slate-400">{formatDate(r.createdAt)}</span>
+                      </div>
+                      <RatingStars value={r.rating} />
+                      {r.comment && <p className="text-sm text-slate-700 mt-1">{r.comment}</p>}
+                      {r.providerReply && (
+                        <p className="mt-2 text-xs bg-slate-50 rounded-lg p-2 text-slate-600">
+                          <span className="font-semibold">Provider reply:</span> {r.providerReply}
+                        </p>
+                      )}
+                    </Card>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </>
       )}
+
+      <Modal open={Boolean(reviewing)} onClose={() => setReviewing(null)} title={`${t('leaveReview')}: ${reviewing?.service?.name || ''}`}>
+        {reviewing && (
+          <ReviewForm
+            bookingId={getId(reviewing)}
+            onCancel={() => setReviewing(null)}
+            onSubmitted={() => {
+              toast.success('Thank you! Your review was submitted.');
+              setReviewing(null);
+              data.reload();
+            }}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

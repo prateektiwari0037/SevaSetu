@@ -81,18 +81,20 @@ export default function Login() {
         )}
 
         {error && (
-          <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center">
+          <div role="alert" className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center">
             <AlertCircle className="w-4 h-4 mr-2 text-red-600 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+        <form onSubmit={handleSubmit} aria-label="Sign in form" className="space-y-4 text-xs">
           <div>
-            <label className="block font-semibold text-slate-700 mb-1">Email Address</label>
+            <label htmlFor="login-email" className="block font-semibold text-slate-700 mb-1">Email Address</label>
             <div className="relative">
-              <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" aria-hidden="true" />
               <input
+                id="login-email"
+                autoComplete="email"
                 type="email"
                 required
                 value={email}
@@ -105,14 +107,16 @@ export default function Login() {
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="font-semibold text-slate-700">Password</label>
+              <label htmlFor="login-password" className="font-semibold text-slate-700">Password</label>
               <Link to="/forgot-password" className="text-primary-600 hover:underline">
                 Forgot password?
               </Link>
             </div>
             <div className="relative">
-              <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" aria-hidden="true" />
               <input
+                id="login-password"
+                autoComplete="current-password"
                 type="password"
                 required
                 value={password}

@@ -184,3 +184,9 @@ export const translations = {
     allRightsReserved: 'सर्वाधिकार सुरक्षित।',
   },
 };
+
+// Customer module strings (Member 2) — merged without overriding shared keys.
+import { customerTranslations } from './customerTranslations';
+for (const lang of Object.keys(customerTranslations)) {
+  translations[lang] = { ...customerTranslations[lang], ...translations[lang] };
+}

@@ -1,294 +1,310 @@
-import React, { useState, useEffect } from 'react';
-import { LifeBuoy, Plus, MessageSquare, Send, CheckCircle2, AlertCircle } from 'lucide-react';
-import api from '../../services/api';
+import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { LifeBuoy, MessageSquare, Plus, Send, ShieldCheck } from 'lucide-react';
+import {
+  PageHeader,
+  Card,
+  Badge,
+  Button,
+  Alert,
+  LoadingList,
+  ErrorState,
+  EmptyState,
+  Modal,
+  Select,
+  TextArea,
+  TextInput,
+  Skeleton,
+} from '../../components/ui';
+import useAsync from '../../hooks/useAsync';
+import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext';
+import { useToast } from '../../context/ToastContext';
+import { bookingApi, complaintApi } from '../../services/customerApi';
+import { formatDate, formatDateTime, getId } from '../../utils/customer';
 
-export default function CustomerComplaints() {
-  const [complaints, setComplaints] = useState([]);
-  const [loading, setLoading] = useState(true);
+export const COMPLAINT_CATEGORIES = [
+  ['SERVICE_QUALITY', 'Poor service quality'],
+  ['PROVIDER_BEHAVIOUR', 'Provider behaviour'],
+  ['NO_SHOW', 'Provider did not arrive'],
+  ['PRICING', 'Pricing / overcharging'],
+  ['DAMAGE', 'Property damage'],
+  ['OTHER', 'Other'],
+];
 
-  // New Complaint Modal
-  const [modalOpen, setModalOpen] = useState(false);
-  const [category, setCategory] = useState('Service Quality');
-  const [subject, setSubject] = useState('');
-  const [description, setDescription] = useState('');
-  const [bookingId, setBookingId] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+const STATUS_TONE = { OPEN: 'amber', UNDER_REVIEW: 'blue', RESOLVED: 'green', REJECTED: 'red', CLOSED: 'slate' };
+const statusLabel = (s) => (s || 'OPEN').replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+const subjectOf = (c) => c.subject || c.title || 'Complaint';
 
-  // Active selected complaint for chat
-  const [selectedComplaint, setSelectedComplaint] = useState(null);
-  const [replyMessage, setReplyMessage] = useState('');
-  const [sendingReply, setSendingReply] = useState(false);
+export const validateComplaint = (v) => {
+  const e = {};
+  if (!v.category) e.category = 'Select a category';
+  if (!v.subject.trim() || v.subject.trim().length < 5) e.subject = 'Subject must be at least 5 characters';
+  if (v.description.trim().length < 20) e.description = 'Describe the issue in at least 20 characters';
+  return e;
+};
 
-  const fetchComplaints = async () => {
-    try {
-      const res = await api.get('/complaints');
-      setComplaints(res.data || []);
-      if (selectedComplaint) {
-        const updated = (res.data || []).find((c) => c.id === selectedComplaint.id);
-        if (updated) setSelectedComplaint(updated);
-      }
-    } catch (err) {
-      console.error('Failed to load complaints:', err);
-    } finally {
-      setLoading(false);
-    }
+function NewComplaintForm({ bookings, presetBookingId, onCreated, onCancel }) {
+  const [values, setValues] = useState({
+    category: '',
+    subject: '',
+    description: '',
+    bookingId: presetBookingId || '',
+  });
+  const [errors, setErrors] = useState({});
+  const [serverError, setServerError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const set = (k) => (e) => {
+    setValues((v) => ({ ...v, [k]: e.target.value }));
+    if (errors[k]) setErrors((x) => ({ ...x, [k]: undefined }));
   };
 
-  useEffect(() => {
-    fetchComplaints();
-  }, []);
-
-  const handleCreateComplaint = async (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    setSubmitting(true);
+    const found = validateComplaint(values);
+    setErrors(found);
+    if (Object.keys(found).length) return;
+    setSaving(true);
+    setServerError('');
     try {
-      await api.post('/complaints', {
-        category,
-        subject,
-        description,
-        bookingId: bookingId || undefined,
+      const created = await complaintApi.create({
+        category: values.category,
+        subject: values.subject.trim(),
+        description: values.description.trim(),
+        bookingId: values.bookingId || undefined,
       });
-      setModalOpen(false);
-      setSubject('');
-      setDescription('');
-      fetchComplaints();
+      onCreated(created);
     } catch (err) {
-      alert(err.message || 'Failed to submit complaint');
+      setServerError(err.message || 'Could not submit complaint');
     } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleSendReply = async (e) => {
-    e.preventDefault();
-    if (!replyMessage.trim()) return;
-    setSendingReply(true);
-    try {
-      await api.post(`/complaints/${selectedComplaint.id}/messages`, {
-        message: replyMessage,
-      });
-      setReplyMessage('');
-      const res = await api.get(`/complaints/${selectedComplaint.id}`);
-      setSelectedComplaint(res.data);
-    } catch (err) {
-      alert(err.message || 'Failed to send message');
-    } finally {
-      setSendingReply(false);
+      setSaving(false);
     }
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Support & Grievances</h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Submit complaints, report disputes, or request resolution from platform administrators
-          </p>
-        </div>
-        <button
-          onClick={() => setModalOpen(true)}
-          className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center space-x-1"
-        >
-          <Plus className="w-4 h-4" />
-          <span>New Complaint Ticket</span>
-        </button>
+    <form onSubmit={submit} noValidate className="space-y-3" aria-label="New complaint">
+      {serverError && <Alert tone="error">{serverError}</Alert>}
+      <Select label="Related booking" value={values.bookingId} onChange={set('bookingId')} hint="Optional — link the complaint to a booking">
+        <option value="">Not related to a booking</option>
+        {bookings.map((b) => (
+          <option key={getId(b)} value={getId(b)}>
+            #{b.bookingNumber} · {b.service?.name} · {formatDate(b.bookingDate)}
+          </option>
+        ))}
+      </Select>
+      <Select label="Category" required value={values.category} onChange={set('category')} error={errors.category}>
+        <option value="">Select a category</option>
+        {COMPLAINT_CATEGORIES.map(([v, l]) => (
+          <option key={v} value={v}>
+            {l}
+          </option>
+        ))}
+      </Select>
+      <TextInput label="Subject" required value={values.subject} onChange={set('subject')} error={errors.subject} maxLength={120} />
+      <TextArea
+        label="Description"
+        required
+        value={values.description}
+        onChange={set('description')}
+        error={errors.description}
+        maxLength={2000}
+        hint="What happened, when, and what outcome you expect."
+      />
+      <p className="text-[11px] text-slate-500">
+        Image attachments are not supported yet — please describe the issue in detail. Our team may contact you for photos.
+      </p>
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="secondary" onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button type="submit" loading={saving} icon={Send}>
+          Submit complaint
+        </Button>
       </div>
+    </form>
+  );
+}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Col: Complaints List */}
-        <div className="lg:col-span-1 space-y-3">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-            Tickets ({complaints.length})
-          </h3>
-          {loading ? (
-            <div className="p-8 text-center text-xs text-slate-400">Loading tickets...</div>
-          ) : complaints.length === 0 ? (
-            <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-xs text-slate-400">
-              No active complaints.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {complaints.map((c) => (
-                <div
-                  key={c.id}
-                  onClick={async () => {
-                    const res = await api.get(`/complaints/${c.id}`);
-                    setSelectedComplaint(res.data);
-                  }}
-                  className={`p-3.5 rounded-2xl border cursor-pointer transition ${
-                    selectedComplaint?.id === c.id
-                      ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
-                      : 'bg-white border-slate-200/80 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-mono font-bold text-slate-400">
-                      #{c.ticketNumber}
-                    </span>
-                    <span
-                      className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                        c.status === 'RESOLVED'
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-amber-50 text-amber-700'
-                      }`}
-                    >
-                      {c.status}
-                    </span>
-                  </div>
-                  <h4 className="font-bold text-slate-900 text-xs truncate">{c.subject}</h4>
-                  <span className="text-[10px] text-slate-500 mt-1 block">{c.category}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+function ComplaintThread({ complaintId, currentUserId, onClose }) {
+  const toast = useToast();
+  const { data, loading, error, reload } = useAsync(() => complaintApi.get(complaintId), [complaintId]);
+  const [reply, setReply] = useState('');
+  const [sending, setSending] = useState(false);
 
-        {/* Right 2 Cols: Selected Complaint Thread */}
-        <div className="lg:col-span-2">
-          {selectedComplaint ? (
-            <div className="bg-white rounded-3xl border border-slate-200/80 p-6 shadow-xs flex flex-col h-[550px] justify-between">
-              <div>
-                <div className="flex items-start justify-between pb-4 border-b border-slate-100">
-                  <div>
-                    <span className="text-[10px] font-mono font-bold text-slate-400 uppercase">
-                      Ticket #{selectedComplaint.ticketNumber} • {selectedComplaint.category}
-                    </span>
-                    <h3 className="text-base font-bold text-slate-900 mt-1">
-                      {selectedComplaint.subject}
-                    </h3>
-                  </div>
-                  <span className="text-xs font-bold px-3 py-1 bg-amber-50 text-amber-800 rounded-full border border-amber-200">
-                    {selectedComplaint.status}
-                  </span>
-                </div>
+  const send = async (e) => {
+    e.preventDefault();
+    if (!reply.trim()) return;
+    setSending(true);
+    try {
+      await complaintApi.reply(complaintId, reply.trim());
+      setReply('');
+      await reload();
+    } catch (err) {
+      toast.error(err.message || 'Could not send message');
+    } finally {
+      setSending(false);
+    }
+  };
 
-                {/* Messages scroll area */}
-                <div className="py-4 space-y-3 overflow-y-auto max-h-[360px] pr-2">
-                  {(selectedComplaint.messages || []).map((msg) => {
-                    const isAdmin = msg.senderRole === 'ADMIN';
-                    return (
-                      <div
-                        key={msg.id}
-                        className={`flex flex-col ${isAdmin ? 'items-start' : 'items-end'}`}
-                      >
-                        <div
-                          className={`max-w-md p-3 rounded-2xl text-xs ${
-                            isAdmin
-                              ? 'bg-slate-100 text-slate-800 rounded-tl-xs'
-                              : 'bg-primary-600 text-white rounded-tr-xs'
-                          }`}
-                        >
-                          <span
-                            className={`block text-[10px] font-bold mb-1 ${
-                              isAdmin ? 'text-purple-700' : 'text-primary-100'
-                            }`}
-                          >
-                            {isAdmin ? '🛡️ SevaSetu Support Admin' : 'You (Customer)'}
-                          </span>
-                          <p className="leading-relaxed">{msg.message}</p>
-                        </div>
-                        <span className="text-[9px] text-slate-400 mt-0.5 px-1">
-                          {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+  if (loading) return <Skeleton className="h-40 w-full" />;
+  if (error) return <ErrorState error={error} onRetry={reload} />;
+  const closed = ['RESOLVED', 'CLOSED', 'REJECTED'].includes(data.status);
 
-              {/* Reply Box */}
-              <form onSubmit={handleSendReply} className="pt-3 border-t border-slate-100 flex gap-2">
-                <input
-                  type="text"
-                  value={replyMessage}
-                  onChange={(e) => setReplyMessage(e.target.value)}
-                  placeholder="Type a message or response..."
-                  className="flex-1 px-3.5 py-2 border border-slate-200 rounded-xl text-xs focus:outline-hidden focus:ring-2 focus:ring-primary-500"
-                />
-                <button
-                  type="submit"
-                  disabled={sendingReply}
-                  className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white font-bold text-xs rounded-xl shadow-xs transition"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </form>
-            </div>
-          ) : (
-            <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-400 text-xs flex flex-col items-center justify-center h-64">
-              <MessageSquare className="w-8 h-8 text-slate-300 mb-2" />
-              <span>Select a complaint ticket from the left to view the thread.</span>
-            </div>
-          )}
-        </div>
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <Badge tone={STATUS_TONE[data.status] || 'slate'}>{statusLabel(data.status)}</Badge>
+        <span className="font-mono">#{data.ticketNumber}</span>
+        {data.booking && <span>· Booking #{data.booking.bookingNumber}</span>}
       </div>
-
-      {/* New Complaint Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-slate-900">Create Support Ticket</h3>
-            <form onSubmit={handleCreateComplaint} className="space-y-3 text-xs">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Issue Category *</label>
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl"
-                >
-                  <option value="Service Quality">Service Quality & Workmanship</option>
-                  <option value="Provider Behavior">Provider Conduct / Late Arrival</option>
-                  <option value="Billing & Charges">Overcharging / Billing Issue</option>
-                  <option value="Warranty Dispute">Warranty Claim Disagreement</option>
-                  <option value="Other">Other Platform Grievance</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Subject *</label>
-                <input
-                  type="text"
-                  required
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                  placeholder="Summary of the issue..."
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Description *</label>
-                <textarea
-                  rows={3}
-                  required
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Provide all relevant details..."
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl"
-                />
-              </div>
-
-              <div className="flex space-x-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="flex-1 py-2 border border-slate-200 text-slate-700 font-bold rounded-xl"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-xl shadow-xs"
-                >
-                  {submitting ? 'Submitting...' : 'Submit Ticket'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {data.adminNotes && (
+        <Alert tone="info" title="Admin response">
+          {data.adminNotes}
+        </Alert>
       )}
+      <ol className="space-y-2 max-h-80 overflow-y-auto" aria-label="Messages">
+        {(data.messages || []).map((m, i) => {
+          const mine = m.senderUserId === currentUserId;
+          const admin = m.senderRole === 'ADMIN';
+          return (
+            <li key={getId(m) || i} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+              <div
+                className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
+                  mine ? 'bg-primary-600 text-white' : admin ? 'bg-sky-50 border border-sky-200 text-slate-800' : 'bg-slate-100 text-slate-800'
+                }`}
+              >
+                {admin && (
+                  <p className="flex items-center gap-1 text-[10px] font-bold uppercase text-sky-700 mb-0.5">
+                    <ShieldCheck className="w-3 h-3" aria-hidden="true" /> SevaSetu support
+                  </p>
+                )}
+                <p className="whitespace-pre-line">{m.message}</p>
+                <p className={`text-[10px] mt-0.5 ${mine ? 'text-primary-100' : 'text-slate-400'}`}>
+                  {formatDateTime(m.createdAt || m.timestamp)}
+                </p>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      {closed ? (
+        <p className="text-xs text-slate-500">This complaint is {statusLabel(data.status).toLowerCase()}. Open a new complaint if you need more help.</p>
+      ) : (
+        <form onSubmit={send} className="flex gap-2">
+          <label htmlFor="complaint-reply" className="sr-only">
+            Reply
+          </label>
+          <input
+            id="complaint-reply"
+            value={reply}
+            onChange={(e) => setReply(e.target.value)}
+            placeholder="Add a message…"
+            className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
+          />
+          <Button type="submit" icon={Send} loading={sending} disabled={!reply.trim()} aria-label="Send message" />
+        </form>
+      )}
+      <div className="flex justify-end">
+        <Button variant="secondary" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export default function CustomerComplaints() {
+  const { t } = useLanguage();
+  const { user } = useAuth();
+  const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const presetBookingId = searchParams.get('bookingId') || '';
+
+  const complaints = useAsync(() => complaintApi.list(), [], { initialData: [] });
+  const bookings = useAsync(() => bookingApi.mine().catch(() => []), [], { initialData: [] });
+  const [creating, setCreating] = useState(Boolean(presetBookingId));
+  const [viewingId, setViewingId] = useState(null);
+
+  useEffect(() => {
+    if (presetBookingId) setCreating(true);
+  }, [presetBookingId]);
+
+  const closeCreate = () => {
+    setCreating(false);
+    if (presetBookingId) setSearchParams({}, { replace: true });
+  };
+
+  return (
+    <div className="space-y-5">
+      <PageHeader
+        title={t('complaintsTitle')}
+        description="Report a problem with a booking and track our response."
+        actions={
+          <Button icon={Plus} onClick={() => setCreating(true)}>
+            {t('newComplaint')}
+          </Button>
+        }
+      />
+
+      {complaints.loading ? (
+        <LoadingList label="Loading complaints…" />
+      ) : complaints.error ? (
+        <ErrorState error={complaints.error} onRetry={complaints.reload} title="Could not load complaints" />
+      ) : complaints.data.length === 0 ? (
+        <EmptyState
+          icon={LifeBuoy}
+          title="No complaints raised"
+          description="If something went wrong with a service, let us know and we'll help."
+          action={
+            <Button icon={Plus} onClick={() => setCreating(true)}>
+              {t('newComplaint')}
+            </Button>
+          }
+        />
+      ) : (
+        <ul className="space-y-3">
+          {complaints.data.map((c) => (
+            <li key={getId(c)}>
+              <Card className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-bold text-slate-900">{subjectOf(c)}</p>
+                    <Badge tone={STATUS_TONE[c.status] || 'slate'}>{statusLabel(c.status)}</Badge>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    <span className="font-mono">#{c.ticketNumber}</span> · {formatDate(c.createdAt)}
+                    {c.booking?.service?.name && ` · ${c.booking.service.name}`}
+                  </p>
+                  <p className="text-xs text-slate-600 mt-1 line-clamp-2">{c.description}</p>
+                </div>
+                <Button size="sm" variant="secondary" icon={MessageSquare} onClick={() => setViewingId(getId(c))}>
+                  View{c._count?.messages ? ` (${c._count.messages})` : ''}
+                </Button>
+              </Card>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Modal open={creating} onClose={closeCreate} title={t('newComplaint')} size="lg">
+        {creating && (
+          <NewComplaintForm
+            bookings={bookings.data || []}
+            presetBookingId={presetBookingId}
+            onCancel={closeCreate}
+            onCreated={(c) => {
+              toast.success(`Complaint ${c?.ticketNumber ? `#${c.ticketNumber} ` : ''}submitted`);
+              closeCreate();
+              complaints.reload();
+            }}
+          />
+        )}
+      </Modal>
+
+      <Modal open={Boolean(viewingId)} onClose={() => setViewingId(null)} title="Complaint details" size="lg">
+        {viewingId && <ComplaintThread complaintId={viewingId} currentUserId={getId(user)} onClose={() => setViewingId(null)} />}
+      </Modal>
     </div>
   );
 }
