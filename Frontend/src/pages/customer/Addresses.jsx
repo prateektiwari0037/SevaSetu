@@ -1,277 +1,160 @@
-import React, { useState, useEffect } from 'react';
-import { MapPin, Plus, Trash2, Edit3, CheckCircle2, Home } from 'lucide-react';
-import api from '../../services/api';
+import React, { useState } from 'react';
+import { MapPin, Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import { PageHeader, Card, Badge, Button, LoadingList, ErrorState, EmptyState, Modal, ConfirmDialog } from '../../components/ui';
+import AddressForm from '../../components/customer/AddressForm';
+import useAsync from '../../hooks/useAsync';
+import { useLanguage } from '../../context/LanguageContext';
+import { useToast } from '../../context/ToastContext';
+import { addressApi } from '../../services/customerApi';
+import { formatAddress, getId } from '../../utils/customer';
 
 export default function Addresses() {
-  const [addresses, setAddresses] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { t } = useLanguage();
+  const toast = useToast();
+  const { data, loading, error, reload } = useAsync(() => addressApi.list(), [], { initialData: [] });
+  const [editing, setEditing] = useState(null); // null | 'new' | address
+  const [deleting, setDeleting] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [defaultingId, setDefaultingId] = useState(null);
 
-  // Form State
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [label, setLabel] = useState('Home');
-  const [streetAddress, setStreetAddress] = useState('');
-  const [city, setCity] = useState('Mumbai');
-  const [state, setState] = useState('Maharashtra');
-  const [pincode, setPincode] = useState('400001');
-  const [isDefault, setIsDefault] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const addresses = data || [];
 
-  const fetchAddresses = async () => {
+  const save = async (payload) => {
+    if (editing === 'new') {
+      await addressApi.create(payload);
+      toast.success('Address added');
+    } else {
+      await addressApi.update(getId(editing), payload);
+      toast.success('Address updated');
+    }
+    setEditing(null);
+    await reload();
+  };
+
+  const confirmDelete = async () => {
+    setBusy(true);
     try {
-      const res = await api.get('/users/addresses');
-      setAddresses(res.data || []);
+      await addressApi.remove(getId(deleting));
+      toast.success('Address deleted');
+      setDeleting(null);
+      await reload();
     } catch (err) {
-      console.error('Failed to load addresses:', err);
+      toast.error(err.message || 'Could not delete address');
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
-  useEffect(() => {
-    fetchAddresses();
-  }, []);
-
-  const handleOpenAdd = () => {
-    setEditingId(null);
-    setLabel('Home');
-    setStreetAddress('');
-    setCity('Mumbai');
-    setState('Maharashtra');
-    setPincode('400001');
-    setIsDefault(addresses.length === 0);
-    setModalOpen(true);
-  };
-
-  const handleOpenEdit = (addr) => {
-    setEditingId(addr.id);
-    setLabel(addr.label);
-    setStreetAddress(addr.streetAddress);
-    setCity(addr.city);
-    setState(addr.state);
-    setPincode(addr.pincode);
-    setIsDefault(addr.isDefault);
-    setModalOpen(true);
-  };
-
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this saved address?')) return;
+  const makeDefault = async (a) => {
+    setDefaultingId(getId(a));
     try {
-      await api.delete(`/users/addresses/${id}`);
-      setAddresses(addresses.filter((a) => a.id !== id));
+      await addressApi.setDefault(getId(a));
+      toast.success(`${a.label || 'Address'} is now your default address`);
+      await reload();
     } catch (err) {
-      alert(err.message || 'Failed to delete address');
-    }
-  };
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      if (editingId) {
-        await api.patch(`/users/addresses/${editingId}`, {
-          label,
-          streetAddress,
-          city,
-          state,
-          pincode,
-          isDefault,
-        });
-      } else {
-        await api.post('/users/addresses', {
-          label,
-          streetAddress,
-          city,
-          state,
-          pincode,
-          isDefault,
-        });
-      }
-      setModalOpen(false);
-      fetchAddresses();
-    } catch (err) {
-      alert(err.message || 'Failed to save address');
+      toast.error(err.message || 'Could not set default address');
     } finally {
-      setSaving(false);
+      setDefaultingId(null);
     }
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Manage Saved Addresses</h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Save home, office, and family locations for 1-click booking dispatch
-          </p>
-        </div>
-        <button
-          onClick={handleOpenAdd}
-          className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center space-x-1"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add Address</span>
-        </button>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        title={t('addressesTitle')}
+        description="Addresses you can pick from when booking a service."
+        actions={
+          <Button icon={Plus} onClick={() => setEditing('new')}>
+            {t('addNewAddress')}
+          </Button>
+        }
+      />
 
       {loading ? (
-        <div className="text-center py-20 text-xs text-slate-400">Loading addresses...</div>
+        <LoadingList count={3} label="Loading addresses…" />
+      ) : error ? (
+        <ErrorState error={error} onRetry={reload} title="Could not load addresses" />
       ) : addresses.length === 0 ? (
-        <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 space-y-2">
-          <MapPin className="w-12 h-12 text-slate-300 mx-auto" />
-          <h3 className="font-bold text-slate-800 text-base">No saved addresses yet</h3>
-          <p className="text-xs text-slate-400">Add your first address for faster service checkout.</p>
-          <button
-            onClick={handleOpenAdd}
-            className="mt-2 px-4 py-2 bg-primary-600 text-white font-bold text-xs rounded-xl shadow-xs"
-          >
-            Add Address
-          </button>
-        </div>
+        <EmptyState
+          icon={MapPin}
+          title="No saved addresses yet"
+          description="Save your home or work address to book faster."
+          action={
+            <Button icon={Plus} onClick={() => setEditing('new')}>
+              {t('addNewAddress')}
+            </Button>
+          }
+        />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {addresses.map((addr) => (
-            <div
-              key={addr.id}
-              className={`p-5 rounded-3xl border bg-white shadow-xs transition flex flex-col justify-between ${
-                addr.isDefault ? 'border-primary-500 ring-2 ring-primary-500/10' : 'border-slate-200'
-              }`}
-            >
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center space-x-2">
-                    <span className="font-bold text-sm text-slate-900">{addr.label}</span>
-                    {addr.isDefault && (
-                      <span className="text-[10px] font-bold text-primary-700 bg-primary-50 px-2 py-0.5 rounded-full border border-primary-200">
-                        Default
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex space-x-1">
-                    <button
-                      onClick={() => handleOpenEdit(addr)}
-                      className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(addr.id)}
-                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+        <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {addresses.map((a) => (
+            <li key={getId(a)}>
+              <Card className={`p-4 h-full flex flex-col ${a.isDefault ? 'border-primary-300' : ''}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                    <MapPin className="w-4 h-4 text-slate-400" aria-hidden="true" />
+                    {a.label || 'Address'}
+                  </p>
+                  {a.isDefault && <Badge tone="primary">{t('defaultLabel')}</Badge>}
                 </div>
-
-                <p className="text-xs text-slate-600 leading-relaxed">{addr.streetAddress}</p>
-                <p className="text-xs text-slate-500 mt-1">
-                  {addr.city}, {addr.state} - <strong>{addr.pincode}</strong>
-                </p>
-              </div>
-            </div>
+                <p className="text-sm text-slate-600 mt-2 flex-1">{formatAddress(a)}</p>
+                <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-slate-100">
+                  <Button size="sm" variant="secondary" icon={Pencil} onClick={() => setEditing(a)} aria-label={`Edit ${a.label || 'address'}`}>
+                    {t('edit')}
+                  </Button>
+                  {!a.isDefault && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={Star}
+                      loading={defaultingId === getId(a)}
+                      onClick={() => makeDefault(a)}
+                      aria-label={`Set ${a.label || 'address'} as default`}
+                    >
+                      {t('setAsDefault')}
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="danger-outline"
+                    icon={Trash2}
+                    onClick={() => setDeleting(a)}
+                    aria-label={`Delete ${a.label || 'address'}`}
+                  >
+                    {t('delete')}
+                  </Button>
+                </div>
+              </Card>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
 
-      {/* Add / Edit Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-slate-900">
-              {editingId ? 'Edit Address' : 'Add New Address'}
-            </h3>
+      <Modal
+        open={Boolean(editing)}
+        onClose={() => setEditing(null)}
+        title={editing === 'new' ? t('addNewAddress') : 'Edit address'}
+        size="lg"
+      >
+        {editing && (
+          <AddressForm
+            key={editing === 'new' ? 'new' : getId(editing)}
+            address={editing === 'new' ? null : editing}
+            onSubmit={save}
+            onCancel={() => setEditing(null)}
+          />
+        )}
+      </Modal>
 
-            <form onSubmit={handleSave} className="space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Label</label>
-                  <input
-                    type="text"
-                    required
-                    value={label}
-                    onChange={(e) => setLabel(e.target.value)}
-                    placeholder="Home, Office, Parents"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Pincode *</label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={6}
-                    value={pincode}
-                    onChange={(e) => setPincode(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Street Address *</label>
-                <textarea
-                  rows={2}
-                  required
-                  value={streetAddress}
-                  onChange={(e) => setStreetAddress(e.target.value)}
-                  placeholder="Flat No, Building, Street, Landmark"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">City *</label>
-                  <input
-                    type="text"
-                    required
-                    value={city}
-                    onChange={(e) => setCity(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">State *</label>
-                  <input
-                    type="text"
-                    required
-                    value={state}
-                    onChange={(e) => setState(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl"
-                  />
-                </div>
-              </div>
-
-              <label className="flex items-center space-x-2 pt-1 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isDefault}
-                  onChange={(e) => setIsDefault(e.target.checked)}
-                  className="rounded text-primary-600"
-                />
-                <span className="font-semibold text-slate-700">Set as default service address</span>
-              </label>
-
-              <div className="flex space-x-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="flex-1 py-2 border border-slate-200 text-slate-700 font-bold rounded-xl"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-xl shadow-xs"
-                >
-                  {saving ? 'Saving...' : 'Save Address'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={Boolean(deleting)}
+        title="Delete address?"
+        message={deleting ? `"${deleting.label || 'Address'}" — ${formatAddress(deleting)} will be removed.` : ''}
+        confirmLabel={t('delete')}
+        loading={busy}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleting(null)}
+      />
     </div>
   );
 }

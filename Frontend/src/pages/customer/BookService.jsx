@@ -1,471 +1,687 @@
-import React, { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  Wrench,
-  Calendar,
+  ArrowLeft,
+  ArrowRight,
+  BadgeCheck,
+  CalendarDays,
+  CheckCircle2,
   Clock,
   MapPin,
-  AlertCircle,
-  ShieldCheck,
-  FileText,
-  ArrowRight,
   Plus,
+  Search,
+  Wallet,
+  Wrench,
 } from 'lucide-react';
-import api from '../../services/api';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  LinkButton,
+  LoadingGrid,
+  LoadingList,
+  Modal,
+  PageHeader,
+  RatingStars,
+  Skeleton,
+  TextArea,
+  TextInput,
+} from '../../components/ui';
+import AddressForm from '../../components/customer/AddressForm';
+import { ProviderAvatar } from '../../components/customer/ProviderCard';
+import useAsync from '../../hooks/useAsync';
+import { useLanguage } from '../../context/LanguageContext';
+import { useToast } from '../../context/ToastContext';
+import { addressApi, bookingApi, catalogApi, providerApi } from '../../services/customerApi';
+import {
+  buildSlotsForDate,
+  formatAddress,
+  formatCurrency,
+  formatDate,
+  getId,
+  providerName,
+  providerRating,
+  providerReviewCount,
+  serviceDuration,
+  toDateInputValue,
+} from '../../utils/customer';
 
-export default function BookService() {
-  const [searchParams] = useSearchParams();
+const MAX_ADVANCE_DAYS = 30;
+const STEPS = ['stepProvider', 'stepAddress', 'stepSchedule', 'stepReview'];
+
+/** Heuristic: does a backend error refer to the chosen time slot? */
+export const isSlotError = (err) =>
+  err?.status === 409 || /\bslot\b|already booked|time (is )?(no longer )?(un)?available/i.test(err?.message || '');
+
+function Stepper({ current, t }) {
+  return (
+    <ol className="grid grid-cols-4 gap-2" aria-label="Booking steps">
+      {STEPS.map((key, i) => {
+        const state = i < current ? 'done' : i === current ? 'current' : 'todo';
+        return (
+          <li key={key} aria-current={state === 'current' ? 'step' : undefined} className="min-w-0">
+            <div className={`h-1.5 rounded-full ${state === 'todo' ? 'bg-slate-200' : 'bg-primary-500'}`} />
+            <p className={`mt-1.5 text-[11px] font-semibold truncate ${state === 'todo' ? 'text-slate-400' : 'text-slate-800'}`}>
+              <span className="sr-only">Step {i + 1}: </span>
+              {t(key)}
+              {state === 'done' && <span className="sr-only"> (completed)</span>}
+            </p>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** Step 0 (only on /customer/book): pick a service, then continue on /customer/book/:serviceId. */
+function ServicePicker() {
+  const { t } = useLanguage();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [query, setQuery] = useState('');
+  const services = useAsync(() => catalogApi.services(), [], { initialData: [] });
 
-  const preselectedServiceId = searchParams.get('serviceId') || '';
-  const preselectedProviderId = searchParams.get('providerId') || '';
-  const initialMode = searchParams.get('mode') === 'quotation' ? 'QUOTATION' : 'DIRECT';
+  const legacyServiceId = searchParams.get('serviceId');
+  useEffect(() => {
+    if (legacyServiceId) {
+      const pid = searchParams.get('providerId');
+      navigate(`/customer/book/${legacyServiceId}${pid ? `?providerId=${pid}` : ''}`, { replace: true });
+    }
+  }, [legacyServiceId, navigate, searchParams]);
 
-  const [mode, setMode] = useState(initialMode); // 'DIRECT' | 'QUOTATION'
-  const [categories, setCategories] = useState([]);
-  const [services, setServices] = useState([]);
-  const [addresses, setAddresses] = useState([]);
-  const [providers, setProviders] = useState([]);
+  const filtered = (services.data || []).filter((s) =>
+    `${s.name} ${s.category?.name || ''}`.toLowerCase().includes(query.trim().toLowerCase())
+  );
 
-  // Form Fields
-  const [selectedServiceId, setSelectedServiceId] = useState(preselectedServiceId);
-  const [selectedProviderId, setSelectedProviderId] = useState(preselectedProviderId);
-  const [problemDescription, setProblemDescription] = useState('');
-  const [bookingDate, setBookingDate] = useState(() => {
-    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    return tomorrow.toISOString().split('T')[0];
-  });
-  const [timeSlot, setTimeSlot] = useState('10:00 AM - 12:00 PM');
-  const [selectedAddressId, setSelectedAddressId] = useState('');
-  const [customAddress, setCustomAddress] = useState('');
-  const [customPincode, setCustomPincode] = useState('400001');
-  const [isEmergency, setIsEmergency] = useState(false);
+  return (
+    <div className="space-y-5">
+      <PageHeader title={t('bookAService')} description={t('selectService')} />
+      <div className="relative">
+        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
+        <label htmlFor="service-picker-search" className="sr-only">
+          {t('searchServices')}
+        </label>
+        <input
+          id="service-picker-search"
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('searchServices')}
+          className="w-full pl-9 pr-3 py-2.5 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
+        />
+      </div>
+      {services.loading ? (
+        <LoadingGrid label="Loading services…" />
+      ) : services.error ? (
+        <ErrorState error={services.error} onRetry={services.reload} />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={Wrench} title={t('noServicesFound')} />
+      ) : (
+        <ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+          {filtered.map((s) => (
+            <li key={getId(s)}>
+              <Link
+                to={`/customer/book/${getId(s)}`}
+                className="block h-full p-4 bg-white border border-slate-200 rounded-2xl hover:border-primary-400 hover:shadow-md transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+              >
+                <Badge tone="primary">{s.category?.name || 'General'}</Badge>
+                <p className="mt-2 text-sm font-bold text-slate-900">{s.name}</p>
+                <p className="text-sm font-extrabold text-slate-900 mt-1">{formatCurrency(s.basePrice)}</p>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
-  // New address inline form
-  const [showNewAddress, setShowNewAddress] = useState(false);
-  const [newLabel, setNewLabel] = useState('Home');
-  const [newStreet, setNewStreet] = useState('');
-  const [newCity, setNewCity] = useState('Mumbai');
-  const [newState, setNewState] = useState('Maharashtra');
-  const [newPincode, setNewPincode] = useState('400001');
+function SelectableCard({ selected, onSelect, name, value, children, disabled, label }) {
+  return (
+    <label
+      className={`block p-4 rounded-2xl border-2 cursor-pointer transition focus-within:ring-2 focus-within:ring-primary-500 ${
+        disabled
+          ? 'opacity-50 cursor-not-allowed border-slate-200 bg-slate-50'
+          : selected
+          ? 'border-primary-500 bg-primary-50/50'
+          : 'border-slate-200 bg-white hover:border-slate-300'
+      }`}
+    >
+      <input
+        type="radio"
+        name={name}
+        value={value}
+        checked={selected}
+        onChange={onSelect}
+        disabled={disabled}
+        className="sr-only"
+        aria-label={label}
+      />
+      {children}
+    </label>
+  );
+}
 
-  const [loading, setLoading] = useState(true);
+function BookingWizard({ serviceId }) {
+  const { t } = useLanguage();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const presetProviderId = searchParams.get('providerId') || '';
+
+  const serviceReq = useAsync(() => catalogApi.service(serviceId), [serviceId]);
+  const addressReq = useAsync(() => addressApi.list(), [], { initialData: [] });
+
+  const [step, setStep] = useState(0);
+  const [providerId, setProviderId] = useState(presetProviderId);
+  const [addressId, setAddressId] = useState('');
+  const [date, setDate] = useState('');
+  const [slot, setSlot] = useState('');
+  const [problem, setProblem] = useState('');
+  const [errors, setErrors] = useState({});
+  const [submitError, setSubmitError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
+  const [unavailableSlots, setUnavailableSlots] = useState(() => new Set());
+  const [confirmed, setConfirmed] = useState(null);
+  const [addressModal, setAddressModal] = useState(false);
 
+  const service = serviceReq.data;
+  const providerOptions = useMemo(
+    () => (service?.providerServices || []).filter((ps) => ps.provider),
+    [service]
+  );
+  const selectedPS = providerOptions.find((ps) => getId(ps.provider) === providerId);
+  const selectedProvider = selectedPS?.provider || null;
+  const price = selectedPS?.customPrice ?? service?.basePrice ?? 0;
+  const addresses = addressReq.data || [];
+  const selectedAddress = addresses.find((a) => getId(a) === addressId);
+
+  // Preselect default address once loaded.
   useEffect(() => {
-    const loadInitialData = async () => {
-      try {
-        const [catRes, servRes, addrRes] = await Promise.all([
-          api.get('/categories'),
-          api.get('/services'),
-          api.get('/users/addresses'),
-        ]);
+    if (!addressId && addresses.length) {
+      setAddressId(getId(addresses.find((a) => a.isDefault) || addresses[0]));
+    }
+  }, [addresses, addressId]);
 
-        setCategories(catRes.data || []);
-        setServices(servRes.data || []);
-        setAddresses(addrRes.data || []);
+  // Drop a preset provider that is not eligible for this service.
+  useEffect(() => {
+    if (service && providerId && !providerOptions.some((ps) => getId(ps.provider) === providerId)) {
+      setProviderId('');
+    }
+  }, [service, providerOptions, providerId]);
 
-        if (addrRes.data?.length > 0) {
-          const defaultAddr = addrRes.data.find((a) => a.isDefault) || addrRes.data[0];
-          setSelectedAddressId(defaultAddr.id);
-        }
-      } catch (err) {
-        console.error('Failed to load initial booking data:', err);
-      } finally {
-        setLoading(false);
+  // Full provider profile (for weekly availability) + availability endpoint, if any.
+  const providerProfile = useAsync(
+    () => (providerId ? providerApi.get(providerId) : Promise.resolve(null)),
+    [providerId]
+  );
+  const slotReq = useAsync(
+    async () => {
+      if (!date) return [];
+      const remote = providerId ? await providerApi.availability(providerId, date) : null;
+      if (remote) {
+        return remote.map((s) => ({
+          label: s.label || s.timeSlot || s.slot,
+          available: s.available !== false && s.isAvailable !== false,
+          reason: s.reason || (s.available === false ? 'Already booked' : ''),
+        }));
       }
-    };
-    loadInitialData();
-  }, []);
+      return buildSlotsForDate(providerProfile.data, date);
+    },
+    [providerId, date, providerProfile.data]
+  );
+  const slots = (slotReq.data || []).map((s) =>
+    unavailableSlots.has(`${date}|${s.label}`) ? { ...s, available: false, reason: 'Slot no longer available' } : s
+  );
 
-  // When service changes, fetch providers offering it
-  useEffect(() => {
-    if (selectedServiceId) {
-      const loadProviders = async () => {
-        try {
-          const res = await api.get(`/services/${selectedServiceId}`);
-          if (res.data?.providerServices) {
-            setProviders(res.data.providerServices.map((ps) => ps.provider));
-          }
-        } catch (err) {
-          console.error(err);
-        }
-      };
-      loadProviders();
-    }
-  }, [selectedServiceId]);
+  const today = toDateInputValue();
+  const maxDate = toDateInputValue(new Date(Date.now() + MAX_ADVANCE_DAYS * 86400000));
 
-  const handleAddNewAddress = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await api.post('/users/addresses', {
-        label: newLabel,
-        streetAddress: newStreet,
-        city: newCity,
-        state: newState,
-        pincode: newPincode,
-        isDefault: true,
-      });
-      setAddresses([res.data, ...addresses]);
-      setSelectedAddressId(res.data.id);
-      setShowNewAddress(false);
-      setNewStreet('');
-    } catch (err) {
-      alert(err.message || 'Failed to add address');
+  const validateStep = (s) => {
+    const e = {};
+    if (s === 0 && providerOptions.length > 0 && !providerId) e.provider = 'Please select a provider';
+    if (s === 1 && !selectedAddress) e.address = 'Please select or add a service address';
+    if (s === 2) {
+      if (!date) e.date = 'Please select a date';
+      else if (date < today) e.date = 'Date cannot be in the past';
+      else if (date > maxDate) e.date = `Bookings can be made up to ${MAX_ADVANCE_DAYS} days ahead`;
+      if (!slot) e.slot = 'Please select a time slot';
+      else if (slots.find((x) => x.label === slot)?.available === false) e.slot = 'This slot is not available. Choose another.';
+      if (problem.trim().length < 10) e.problem = 'Please describe the problem (at least 10 characters)';
     }
+    setErrors(e);
+    return Object.keys(e).length === 0;
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-
-    if (!selectedServiceId) {
-      return setError('Please select a service category and service');
+  const next = () => {
+    if (validateStep(step)) {
+      setSubmitError(null);
+      setStep((s) => Math.min(s + 1, STEPS.length - 1));
     }
-    if (!problemDescription.trim()) {
-      return setError('Please enter a description of the problem or task');
-    }
+  };
+  const prev = () => {
+    setErrors({});
+    setStep((s) => Math.max(0, s - 1));
+  };
 
-    // Resolve address
-    let finalAddress = customAddress;
-    let finalPincode = customPincode;
-    if (selectedAddressId) {
-      const addr = addresses.find((a) => a.id === selectedAddressId);
-      if (addr) {
-        finalAddress = `${addr.label}: ${addr.streetAddress}, ${addr.city}`;
-        finalPincode = addr.pincode;
+  const submit = async () => {
+    for (const s of [0, 1, 2]) {
+      if (!validateStep(s)) {
+        setStep(s);
+        return;
       }
     }
-
-    if (!finalAddress) {
-      return setError('Please select or enter a service location address');
-    }
-
     setSubmitting(true);
+    setSubmitError(null);
     try {
-      if (mode === 'QUOTATION') {
-        const selectedService = services.find((s) => s.id === selectedServiceId);
-        const reqRes = await api.post('/service-requests', {
-          serviceId: selectedServiceId,
-          title: `Quotation Request: ${selectedService?.name || 'Home Service'}`,
-          description: problemDescription,
-          address: finalAddress,
-          pincode: finalPincode,
-          preferredDate: bookingDate,
-          preferredTimeSlot: timeSlot,
-        });
-
-        navigate(`/customer/quotations/${reqRes.data.id}`);
-      } else {
-        // Direct Booking
-        const bookRes = await api.post('/bookings', {
-          serviceId: selectedServiceId,
-          providerId: selectedProviderId || undefined,
-          problemDescription,
-          bookingDate,
-          timeSlot,
-          serviceAddress: finalAddress,
-          addressPincode: finalPincode,
-          bookingType: isEmergency ? 'EMERGENCY' : 'NORMAL',
-        });
-
-        navigate(`/customer/bookings/${bookRes.data.id}`);
-      }
+      const booking = await bookingApi.create({
+        serviceId: getId(service),
+        ...(providerId ? { providerId } : {}),
+        bookingType: 'NORMAL',
+        problemDescription: problem.trim(),
+        bookingDate: date,
+        timeSlot: slot,
+        serviceAddress: formatAddress(selectedAddress),
+        addressArea: selectedAddress.area,
+        addressCity: selectedAddress.city,
+        addressPincode: selectedAddress.pincode,
+        totalAmount: price,
+        paymentMethod: 'CASH',
+      });
+      setConfirmed(booking);
+      toast.success(t('bookingConfirmed'));
     } catch (err) {
-      setError(err.message || 'Failed to submit service request');
+      if (isSlotError(err)) {
+        setUnavailableSlots((prev) => new Set(prev).add(`${date}|${slot}`));
+        setSlot('');
+        setStep(2);
+        setErrors({ slot: err.message || 'That slot is no longer available. Please choose another.' });
+      } else {
+        setSubmitError(err);
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
-  const selectedService = services.find((s) => s.id === selectedServiceId);
+  const addAddress = async (payload) => {
+    const created = await addressApi.create(payload);
+    await addressReq.reload();
+    if (getId(created)) setAddressId(getId(created));
+    setAddressModal(false);
+    toast.success('Address saved');
+  };
+
+  if (serviceReq.loading) {
+    return (
+      <div role="status" className="space-y-4">
+        <span className="sr-only">Loading booking form…</span>
+        <Skeleton className="h-8 w-1/2" />
+        <Skeleton className="h-3 w-full" />
+        <LoadingList count={3} />
+      </div>
+    );
+  }
+  if (serviceReq.error) {
+    return (
+      <div className="space-y-4">
+        <Link to="/customer/book" className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-primary-700">
+          <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" /> {t('selectService')}
+        </Link>
+        <ErrorState
+          error={serviceReq.error}
+          onRetry={serviceReq.reload}
+          title={serviceReq.error.status === 404 ? 'Service not found' : 'Could not load service'}
+        />
+      </div>
+    );
+  }
+
+  if (confirmed) {
+    const bid = getId(confirmed);
+    return (
+      <Card className="max-w-xl mx-auto p-6 sm:p-8 text-center space-y-4" role="status" aria-live="polite">
+        <CheckCircle2 className="w-14 h-14 text-emerald-500 mx-auto" aria-hidden="true" />
+        <div>
+          <h1 className="text-xl font-extrabold text-slate-900">{t('bookingConfirmed')}</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Booking <span className="font-mono font-semibold text-slate-700">#{confirmed.bookingNumber || bid}</span> is{' '}
+            {confirmed.status === 'PENDING' || !confirmed.status ? 'awaiting provider confirmation' : confirmed.status.toLowerCase()}.
+          </p>
+        </div>
+        <dl className="text-sm text-left bg-slate-50 rounded-xl p-4 space-y-1.5">
+          <div className="flex justify-between gap-3">
+            <dt className="text-slate-500">Service</dt>
+            <dd className="font-semibold text-slate-800 text-right">{service.name}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-slate-500">When</dt>
+            <dd className="font-semibold text-slate-800 text-right">
+              {formatDate(confirmed.bookingDate || date)} · {confirmed.timeSlot || slot}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-slate-500">{t('totalPrice')}</dt>
+            <dd className="font-semibold text-slate-800">{formatCurrency(confirmed.totalAmount ?? price)}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-slate-500">{t('paymentMethod')}</dt>
+            <dd className="font-semibold text-slate-800">{t('cashOnService')}</dd>
+          </div>
+        </dl>
+        <div className="flex flex-col sm:flex-row gap-2 justify-center">
+          {bid && (
+            <Button onClick={() => navigate(`/customer/bookings/${bid}`)} icon={ArrowRight}>
+              {t('viewBooking')}
+            </Button>
+          )}
+          <LinkButton to="/customer/bookings" variant="secondary">
+            {t('bookingsTitle')}
+          </LinkButton>
+        </div>
+      </Card>
+    );
+  }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="text-center space-y-2">
-        <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">
-          {mode === 'QUOTATION' ? 'Request Multiple Service Quotations' : 'Book a Local Service'}
-        </h1>
-        <p className="text-xs text-slate-500 max-w-lg mx-auto">
-          {mode === 'QUOTATION'
-            ? 'Describe your requirement and get transparent bids from verified neighborhood technicians.'
-            : 'Schedule an instant visit from a verified local technician with guaranteed 30-day warranty.'}
-        </p>
+    <div className="max-w-3xl mx-auto space-y-5">
+      <PageHeader
+        backLink={
+          <Link to={`/customer/services/${serviceId}`} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-primary-700 mb-2">
+            <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" /> {service.name}
+          </Link>
+        }
+        title={`${t('bookAService')}: ${service.name}`}
+        description={`${service.category?.name || ''}${serviceDuration(service) ? ` · ~${serviceDuration(service)} min` : ''}`}
+      />
+      <Stepper current={step} t={t} />
 
-        {/* Mode Switcher */}
-        <div className="inline-flex p-1 bg-slate-100 rounded-2xl mt-2">
-          <button
-            type="button"
-            onClick={() => setMode('DIRECT')}
-            className={`px-4 py-1.5 text-xs font-bold rounded-xl transition ${
-              mode === 'DIRECT' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            Direct Service Booking
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('QUOTATION')}
-            className={`px-4 py-1.5 text-xs font-bold rounded-xl transition ${
-              mode === 'QUOTATION' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            Multiple Quotations Mode
-          </button>
-        </div>
+      <Card className="p-5 sm:p-6">
+        {step === 0 && (
+          <fieldset>
+            <legend className="text-base font-bold text-slate-900 mb-3">{t('selectProvider')}</legend>
+            {providerOptions.length === 0 ? (
+              <Alert tone="info" title="No provider is listed for this service right now">
+                Your request will be sent to verified providers, and the first one available will accept it. You'll be notified.
+              </Alert>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" role="radiogroup" aria-invalid={errors.provider ? true : undefined}>
+                {providerOptions.map((ps) => {
+                  const p = ps.provider;
+                  const pid = getId(p);
+                  const pPrice = ps.customPrice ?? service.basePrice;
+                  return (
+                    <SelectableCard
+                      key={pid}
+                      name="provider"
+                      value={pid}
+                      selected={providerId === pid}
+                      onSelect={() => {
+                        setProviderId(pid);
+                        setSlot('');
+                        setErrors((e) => ({ ...e, provider: undefined }));
+                      }}
+                      label={`${providerName(p)}, ${formatCurrency(pPrice)}`}
+                    >
+                      <div className="flex gap-3">
+                        <ProviderAvatar provider={p} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-bold text-slate-900 truncate">{providerName(p)}</p>
+                          <RatingStars value={providerRating(p)} count={providerReviewCount(p)} />
+                          <div className="flex items-center gap-2 mt-1">
+                            {p.verificationStatus === 'APPROVED' && (
+                              <Badge tone="green" icon={BadgeCheck}>
+                                {t('verified')}
+                              </Badge>
+                            )}
+                            <span className="text-xs text-slate-500">
+                              {p.experienceYears ?? 0} {t('years')}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-sm font-extrabold text-slate-900">{formatCurrency(pPrice)}</p>
+                      </div>
+                    </SelectableCard>
+                  );
+                })}
+              </div>
+            )}
+            {errors.provider && (
+              <p role="alert" className="mt-2 text-xs font-medium text-red-600">
+                {errors.provider}
+              </p>
+            )}
+          </fieldset>
+        )}
+
+        {step === 1 && (
+          <fieldset>
+            <legend className="text-base font-bold text-slate-900 mb-3">{t('selectAddress')}</legend>
+            {addressReq.loading ? (
+              <LoadingList count={2} label="Loading addresses…" />
+            ) : addressReq.error ? (
+              <ErrorState error={addressReq.error} onRetry={addressReq.reload} title="Could not load your addresses" />
+            ) : addresses.length === 0 ? (
+              <EmptyState
+                icon={MapPin}
+                title="No saved addresses"
+                description="Add the address where the service is needed."
+                action={
+                  <Button icon={Plus} onClick={() => setAddressModal(true)}>
+                    {t('addNewAddress')}
+                  </Button>
+                }
+              />
+            ) : (
+              <div className="space-y-3" role="radiogroup" aria-invalid={errors.address ? true : undefined}>
+                {addresses.map((a) => (
+                  <SelectableCard
+                    key={getId(a)}
+                    name="address"
+                    value={getId(a)}
+                    selected={addressId === getId(a)}
+                    onSelect={() => {
+                      setAddressId(getId(a));
+                      setErrors((e) => ({ ...e, address: undefined }));
+                    }}
+                    label={`${a.label || 'Address'}: ${formatAddress(a)}`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <MapPin className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" aria-hidden="true" />
+                      <div>
+                        <p className="text-sm font-bold text-slate-900">
+                          {a.label || 'Address'} {a.isDefault && <Badge tone="primary">{t('defaultLabel')}</Badge>}
+                        </p>
+                        <p className="text-xs text-slate-600">{formatAddress(a)}</p>
+                      </div>
+                    </div>
+                  </SelectableCard>
+                ))}
+                <Button variant="secondary" icon={Plus} onClick={() => setAddressModal(true)}>
+                  {t('addNewAddress')}
+                </Button>
+              </div>
+            )}
+            {errors.address && (
+              <p role="alert" className="mt-2 text-xs font-medium text-red-600">
+                {errors.address}
+              </p>
+            )}
+          </fieldset>
+        )}
+
+        {step === 2 && (
+          <div className="space-y-5">
+            <TextInput
+              label={t('selectDate')}
+              type="date"
+              required
+              min={today}
+              max={maxDate}
+              value={date}
+              onChange={(e) => {
+                setDate(e.target.value);
+                setSlot('');
+                setErrors((x) => ({ ...x, date: undefined, slot: undefined }));
+              }}
+              error={errors.date}
+              className="max-w-xs"
+            />
+            <fieldset>
+              <legend className="block text-xs font-semibold text-slate-700 mb-2">
+                {t('selectSlot')}
+                <span className="text-red-600 ml-0.5" aria-hidden="true">
+                  *
+                </span>
+              </legend>
+              {!date ? (
+                <p className="text-xs text-slate-500">Pick a date to see available time slots.</p>
+              ) : slotReq.loading || providerProfile.loading ? (
+                <div role="status" className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <span className="sr-only">Loading time slots…</span>
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <Skeleton key={i} className="h-11" />
+                  ))}
+                </div>
+              ) : slotReq.error ? (
+                <ErrorState error={slotReq.error} onRetry={slotReq.reload} title="Could not load time slots" />
+              ) : slots.every((s) => !s.available) ? (
+                <Alert tone="warning" title="No slots available on this date">
+                  Please choose another date.
+                </Alert>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" role="radiogroup" aria-invalid={errors.slot ? true : undefined}>
+                  {slots.map((s) => (
+                    <label
+                      key={s.label}
+                      title={s.available ? undefined : s.reason}
+                      className={`flex flex-col items-center justify-center text-center px-2 py-2.5 rounded-xl border-2 text-xs font-semibold transition focus-within:ring-2 focus-within:ring-primary-500 ${
+                        !s.available
+                          ? 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed line-through'
+                          : slot === s.label
+                          ? 'border-primary-500 bg-primary-50 text-primary-800 cursor-pointer'
+                          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 cursor-pointer'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="slot"
+                        value={s.label}
+                        checked={slot === s.label}
+                        disabled={!s.available}
+                        onChange={() => {
+                          setSlot(s.label);
+                          setErrors((x) => ({ ...x, slot: undefined }));
+                        }}
+                        className="sr-only"
+                        aria-label={`${s.label}${s.available ? '' : ` – unavailable: ${s.reason}`}`}
+                      />
+                      <Clock className="w-3.5 h-3.5 mb-0.5" aria-hidden="true" />
+                      {s.label}
+                    </label>
+                  ))}
+                </div>
+              )}
+              {errors.slot && (
+                <p role="alert" className="mt-2 text-xs font-medium text-red-600">
+                  {errors.slot}
+                </p>
+              )}
+            </fieldset>
+            <TextArea
+              label={t('describeProblem')}
+              required
+              value={problem}
+              onChange={(e) => {
+                setProblem(e.target.value);
+                if (errors.problem) setErrors((x) => ({ ...x, problem: undefined }));
+              }}
+              error={errors.problem}
+              hint="e.g. Ceiling fan making noise at high speed"
+              maxLength={1000}
+            />
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="space-y-4">
+            <h2 className="text-base font-bold text-slate-900">{t('reviewBooking')}</h2>
+            {submitError && (
+              <Alert tone="error" title="Booking could not be placed">
+                {submitError.message}
+                {Array.isArray(submitError.errors) && (
+                  <ul className="list-disc list-inside mt-1">
+                    {submitError.errors.map((e, i) => (
+                      <li key={i}>{typeof e === 'string' ? e : e.message || e.msg}</li>
+                    ))}
+                  </ul>
+                )}
+              </Alert>
+            )}
+            <dl className="divide-y divide-slate-100 text-sm">
+              {[
+                ['Service', service.name, null],
+                ['Provider', selectedProvider ? providerName(selectedProvider) : 'Any available verified provider', 0],
+                [t('serviceAddress'), formatAddress(selectedAddress), 1],
+                ['Date & time', `${formatDate(date)} · ${slot}`, 2],
+                ['Problem', problem.trim(), 2],
+              ].map(([label, value, editStep]) => (
+                <div key={label} className="py-2.5 flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4">
+                  <dt className="sm:w-36 shrink-0 text-slate-500">{label}</dt>
+                  <dd className="flex-1 font-medium text-slate-800 break-words">{value}</dd>
+                  {editStep !== null && (
+                    <button
+                      type="button"
+                      onClick={() => setStep(editStep)}
+                      className="text-xs font-semibold text-primary-700 hover:underline self-start"
+                      aria-label={`Edit ${label}`}
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+              ))}
+            </dl>
+            <div className="rounded-xl bg-slate-50 border border-slate-100 p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-600">{t('fixedPrice')}</span>
+                <span className="text-xl font-extrabold text-slate-900">{formatCurrency(price)}</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-slate-600">
+                <Wallet className="w-4 h-4 text-slate-400" aria-hidden="true" />
+                {t('paymentMethod')}: <span className="font-semibold">{t('cashOnService')}</span> — pay the provider after the job is done.
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      <div className="flex items-center justify-between gap-2">
+        <Button variant="secondary" icon={ArrowLeft} onClick={prev} disabled={step === 0 || submitting}>
+          {t('back')}
+        </Button>
+        {step < STEPS.length - 1 ? (
+          <Button onClick={next}>
+            {t('continue')} <ArrowRight className="w-4 h-4" aria-hidden="true" />
+          </Button>
+        ) : (
+          <Button onClick={submit} loading={submitting} icon={CalendarDays}>
+            {t('confirmBooking')}
+          </Button>
+        )}
       </div>
 
-      {error && (
-        <div className="p-4 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-2xl flex items-center">
-          <AlertCircle className="w-4 h-4 mr-2 text-red-600 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {/* Main Form */}
-      <form onSubmit={handleSubmit} className="bg-white p-6 sm:p-10 rounded-3xl border border-slate-200/80 shadow-xs space-y-6 text-xs">
-        {/* Service Selection */}
-        <div>
-          <label className="block font-bold text-slate-900 mb-2">1. Select Service Category & Job *</label>
-          <select
-            required
-            value={selectedServiceId}
-            onChange={(e) => setSelectedServiceId(e.target.value)}
-            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-primary-500 font-medium text-slate-800"
-          >
-            <option value="">-- Choose a Service --</option>
-            {services.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.category?.name} → {s.name} (Base: ₹{s.basePrice})
-              </option>
-            ))}
-          </select>
-
-          {selectedService && (
-            <div className="mt-2.5 p-3 bg-primary-50/60 rounded-xl border border-primary-100 flex items-center justify-between text-xs">
-              <span className="text-primary-800 font-medium">{selectedService.description}</span>
-              <span className="font-extrabold text-primary-900 whitespace-nowrap ml-2">
-                Starting ₹{selectedService.basePrice}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Optional Provider Selection (Direct mode only) */}
-        {mode === 'DIRECT' && providers.length > 0 && (
-          <div>
-            <label className="block font-bold text-slate-900 mb-1">
-              Select Specific Provider (Optional - leave default for best available technician)
-            </label>
-            <select
-              value={selectedProviderId}
-              onChange={(e) => setSelectedProviderId(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs"
-            >
-              <option value="">⚡ Auto-Assign Nearest Available Certified Pro</option>
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.fullName} ({p.experienceYears} yrs exp • ★ {p.ratingAverage || 5.0})
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {/* Problem Description */}
-        <div>
-          <label className="block font-bold text-slate-900 mb-1">
-            2. Describe the Problem / Service Requirements *
-          </label>
-          <textarea
-            rows={3}
-            required
-            value={problemDescription}
-            onChange={(e) => setProblemDescription(e.target.value)}
-            placeholder="e.g. Living room fan is making loud buzzing noise and regulator knob is loose..."
-            className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs focus:outline-hidden focus:ring-2 focus:ring-primary-500"
-          />
-        </div>
-
-        {/* Address Selection */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="font-bold text-slate-900">3. Service Location Address *</label>
-            <button
-              type="button"
-              onClick={() => setShowNewAddress(!showNewAddress)}
-              className="text-primary-600 font-bold hover:underline flex items-center"
-            >
-              <Plus className="w-3.5 h-3.5 mr-1" />
-              {showNewAddress ? 'Cancel' : 'Add New Address'}
-            </button>
-          </div>
-
-          {showNewAddress ? (
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 mb-3">
-              <span className="font-bold text-slate-800 block text-xs">Save New Address</span>
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  placeholder="Label (e.g. Home, Office)"
-                  value={newLabel}
-                  onChange={(e) => setNewLabel(e.target.value)}
-                  className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs"
-                />
-                <input
-                  type="text"
-                  placeholder="Pincode"
-                  value={newPincode}
-                  onChange={(e) => setNewPincode(e.target.value)}
-                  className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs"
-                />
-              </div>
-              <input
-                type="text"
-                placeholder="Flat / Building / Street Address"
-                value={newStreet}
-                onChange={(e) => setNewStreet(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs"
-              />
-              <button
-                type="button"
-                onClick={handleAddNewAddress}
-                className="px-4 py-2 bg-primary-600 text-white font-bold rounded-xl text-xs"
-              >
-                Save & Select This Address
-              </button>
-            </div>
-          ) : addresses.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {addresses.map((addr) => (
-                <label
-                  key={addr.id}
-                  className={`p-3 rounded-2xl border cursor-pointer flex items-start space-x-2.5 transition ${
-                    selectedAddressId === addr.id
-                      ? 'border-primary-600 bg-primary-50/50'
-                      : 'border-slate-200 bg-slate-50/50'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="addressSelection"
-                    checked={selectedAddressId === addr.id}
-                    onChange={() => setSelectedAddressId(addr.id)}
-                    className="mt-0.5 text-primary-600"
-                  />
-                  <div>
-                    <span className="font-bold text-slate-800 block">{addr.label}</span>
-                    <p className="text-[11px] text-slate-600 mt-0.5 leading-tight">
-                      {addr.streetAddress}, {addr.city} ({addr.pincode})
-                    </p>
-                  </div>
-                </label>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <input
-                type="text"
-                required
-                value={customAddress}
-                onChange={(e) => setCustomAddress(e.target.value)}
-                placeholder="Full Street Address"
-                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs"
-              />
-              <input
-                type="text"
-                required
-                maxLength={6}
-                value={customPincode}
-                onChange={(e) => setCustomPincode(e.target.value)}
-                placeholder="Pincode (6 digits)"
-                className="w-48 px-3 py-2 border border-slate-200 rounded-xl text-xs"
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Date and Time Slot */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block font-bold text-slate-900 mb-1">4. Preferred Service Date *</label>
-            <div className="relative">
-              <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              <input
-                type="date"
-                required
-                value={bookingDate}
-                onChange={(e) => setBookingDate(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-hidden"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block font-bold text-slate-900 mb-1">5. Preferred Time Slot *</label>
-            <div className="relative">
-              <Clock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              <select
-                value={timeSlot}
-                onChange={(e) => setTimeSlot(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-hidden"
-              >
-                <option value="08:00 AM - 10:00 AM">Morning: 08:00 AM - 10:00 AM</option>
-                <option value="10:00 AM - 12:00 PM">Morning: 10:00 AM - 12:00 PM</option>
-                <option value="12:00 PM - 02:00 PM">Afternoon: 12:00 PM - 02:00 PM</option>
-                <option value="02:00 PM - 04:00 PM">Afternoon: 02:00 PM - 04:00 PM</option>
-                <option value="04:00 PM - 06:00 PM">Evening: 04:00 PM - 06:00 PM</option>
-                <option value="06:00 PM - 08:00 PM">Evening: 06:00 PM - 08:00 PM</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* Emergency SOS Checkbox */}
-        {mode === 'DIRECT' && (
-          <label className="flex items-center space-x-2.5 p-3 rounded-2xl border border-red-200 bg-red-50/50 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={isEmergency}
-              onChange={(e) => setIsEmergency(e.target.checked)}
-              className="w-4 h-4 text-red-600 rounded"
-            />
-            <div>
-              <span className="font-bold text-red-700 block">Mark as Priority Emergency SOS Request</span>
-              <span className="text-[11px] text-red-600">
-                Broadcasts urgently to all nearby active technicians for immediate dispatch.
-              </span>
-            </div>
-          </label>
-        )}
-
-        {/* Submit Button */}
-        <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-          <div className="text-xs text-slate-500">
-            {mode === 'QUOTATION' ? (
-              <span>Multiple independent bids will arrive within minutes.</span>
-            ) : (
-              <span>Protected by SevaSetu 30-Day Service Warranty.</span>
-            )}
-          </div>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white font-bold text-xs rounded-xl shadow-md shadow-primary-500/20 transition flex items-center space-x-2"
-          >
-            <span>
-              {submitting
-                ? 'Submitting...'
-                : mode === 'QUOTATION'
-                ? 'Submit for Quotations'
-                : 'Confirm & Place Booking'}
-            </span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
-        </div>
-      </form>
+      <Modal open={addressModal} onClose={() => setAddressModal(false)} title={t('addNewAddress')} size="lg">
+        <AddressForm onSubmit={addAddress} onCancel={() => setAddressModal(false)} />
+      </Modal>
     </div>
   );
+}
+
+export default function BookService() {
+  const { serviceId } = useParams();
+  return serviceId ? <BookingWizard key={serviceId} serviceId={serviceId} /> : <ServicePicker />;
 }

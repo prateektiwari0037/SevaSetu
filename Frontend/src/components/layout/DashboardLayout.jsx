@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
   Wrench,
   LayoutDashboard,
@@ -37,7 +37,7 @@ import { useNotifications } from '../../context/NotificationContext';
 
 export default function DashboardLayout() {
   const { user, role, logout } = useAuth();
-  const { lang, toggleLanguage } = useLanguage();
+  const { lang, toggleLanguage, t } = useLanguage();
   const { unreadCount } = useNotifications();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
@@ -45,18 +45,19 @@ export default function DashboardLayout() {
 
   // Navigation configurations per role
   const customerLinks = [
-    { name: 'Dashboard', path: '/customer/dashboard', icon: LayoutDashboard },
-    { name: 'My Bookings', path: '/customer/bookings', icon: CalendarCheck },
-    { name: 'Book a Service', path: '/customer/book-service', icon: Wrench },
-    { name: 'Emergency SOS', path: '/customer/emergency', icon: AlertCircle, alert: true },
-    { name: 'Find Providers', path: '/customer/providers', icon: MapPin },
-    { name: 'Saved Addresses', path: '/customer/addresses', icon: MapPin },
-    { name: 'Favorites', path: '/customer/favorites', icon: Heart },
-    { name: 'My Reviews', path: '/customer/reviews', icon: Star },
-    { name: 'Subscriptions', path: '/customer/subscriptions', icon: Layers },
-    { name: 'Support Complaints', path: '/customer/complaints', icon: LifeBuoy },
-    { name: 'Profile', path: '/customer/profile', icon: User },
-    { name: 'Settings', path: '/customer/settings', icon: Settings },
+    { name: t('cNavDashboard'), path: '/customer/dashboard', icon: LayoutDashboard },
+    { name: t('cNavServices'), path: '/customer/services', icon: Wrench },
+    { name: t('cNavProviders'), path: '/customer/providers', icon: Users },
+    { name: t('cNavBookings'), path: '/customer/bookings', icon: CalendarCheck },
+    { name: t('cNavEmergency'), path: '/customer/emergency', icon: AlertCircle, alert: true },
+    { name: t('cNavFavorites'), path: '/customer/favorites', icon: Heart },
+    { name: t('cNavReviews'), path: '/customer/reviews', icon: Star },
+    { name: t('cNavAddresses'), path: '/customer/addresses', icon: MapPin },
+    { name: t('cNavNotifications'), path: '/customer/notifications', icon: Bell, badge: unreadCount },
+    { name: t('cNavComplaints'), path: '/customer/complaints', icon: LifeBuoy },
+    { name: t('cNavSubscriptions'), path: '/customer/subscriptions', icon: Layers },
+    { name: t('cNavProfile'), path: '/customer/profile', icon: User },
+    { name: t('cNavSettings'), path: '/customer/settings', icon: Settings },
   ];
 
   const providerLinks = [
@@ -104,6 +105,13 @@ export default function DashboardLayout() {
   else if (role === 'SHOP_OWNER') currentLinks = shopLinks;
   else if (role === 'ADMIN') currentLinks = adminLinks;
 
+  // Highlight the most specific link matching the current path (so /customer/bookings/123
+  // highlights "My Bookings", and /provider/services/add highlights "Add Service" only).
+  const activePath = currentLinks
+    .map((l) => l.path)
+    .filter((p) => location.pathname === p || location.pathname.startsWith(`${p}/`))
+    .sort((a, b) => b.length - a.length)[0];
+
   const roleBadgeColors = {
     ADMIN: 'bg-purple-100 text-purple-700 border-purple-200',
     PROVIDER: 'bg-emerald-100 text-emerald-700 border-emerald-200',
@@ -125,8 +133,11 @@ export default function DashboardLayout() {
         </Link>
         <div className="flex items-center space-x-2">
           <button
+            type="button"
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-2 rounded-lg text-slate-600 hover:bg-slate-100"
+            aria-label={sidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
+            aria-expanded={sidebarOpen}
           >
             {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
@@ -186,14 +197,15 @@ export default function DashboardLayout() {
         </div>
 
         {/* Navigation Links */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+        <nav aria-label="Dashboard navigation" className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
           {currentLinks.map((item) => {
             const Icon = item.icon;
-            const isActive = location.pathname === item.path;
+            const isActive = item.path === activePath;
             return (
-              <NavLink
+              <Link
                 key={item.path}
                 to={item.path}
+                aria-current={isActive ? 'page' : undefined}
                 onClick={() => setSidebarOpen(false)}
                 className={`flex items-center px-3 py-2 text-xs font-medium rounded-xl transition ${
                   isActive
@@ -209,11 +221,21 @@ export default function DashboardLayout() {
                   }`}
                 />
                 <span className="truncate">{item.name}</span>
-                {isActive && <ChevronRight className="w-3.5 h-3.5 ml-auto text-primary-200" />}
-              </NavLink>
+                {item.badge > 0 && (
+                  <span
+                    className={`ml-auto min-w-[1.25rem] px-1 text-center rounded-full text-[10px] font-bold ${
+                      isActive ? 'bg-white/25 text-white' : 'bg-red-600 text-white'
+                    }`}
+                    aria-label={`${item.badge} unread`}
+                  >
+                    {item.badge}
+                  </span>
+                )}
+                {isActive && !item.badge && <ChevronRight className="w-3.5 h-3.5 ml-auto text-primary-200" />}
+              </Link>
             );
           })}
-        </div>
+        </nav>
 
         {/* Bottom Bar in Sidebar */}
         <div className="p-3 border-t border-slate-100 space-y-1">

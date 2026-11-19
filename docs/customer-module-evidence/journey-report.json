@@ -1,0 +1,20 @@
+{
+  "steps": [
+    "Registered as customer → landed on /customer/dashboard",
+    "Browse services: list + filters rendered",
+    "Service detail shows eligible providers with fixed prices",
+    "Added address inline during booking (auto-selected)",
+    "Selected date 2026-12-02, slot 10:00 AM - 12:00 PM; review shows ₹349 fixed price + Cash on Service",
+    "Booking confirmed",
+    "Track booking: /customer/bookings/b-8 (PENDING)",
+    "Provider accepted → in progress → completed (simulated); timeline updated",
+    "Submitted 5★ review",
+    "Responsive mobile (390px): 10 pages checked",
+    "Responsive tablet (820px): 10 pages checked",
+    "Responsive desktop (1440px): 10 pages checked"
+  ],
+  "horizontalOverflow": [],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+}

@@ -71,7 +71,7 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
-                <Link to="/privacy-policy" className="hover:text-primary-400 transition">
+                <Link to="/privacy" className="hover:text-primary-400 transition">
                   Privacy Policy
                 </Link>
               </li>
@@ -107,7 +107,7 @@ export default function Footer() {
         <div className="pt-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500">
           <p>© {new Date().getFullYear()} SevaSetu Platform. {t('allRightsReserved')}</p>
           <div className="flex space-x-6 mt-4 sm:mt-0">
-            <Link to="/privacy-policy" className="hover:text-slate-400">
+            <Link to="/privacy" className="hover:text-slate-400">
               Privacy
             </Link>
             <Link to="/terms" className="hover:text-slate-400">
