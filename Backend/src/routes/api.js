@@ -15,6 +15,7 @@ import complaintsRoutes from '../modules/complaints/complaints.routes.js';
 import warrantiesRoutes from '../modules/warranties/warranties.routes.js';
 import subscriptionsRoutes from '../modules/subscriptions/subscriptions.routes.js';
 import adminRoutes from '../modules/admin/admin.routes.js';
+import uploadsRoutes from '../modules/uploads/uploads.routes.js';
 
 const apiRouter = Router();
 
@@ -34,5 +35,6 @@ apiRouter.use('/complaints', complaintsRoutes);
 apiRouter.use('/', warrantiesRoutes); // mounts /warranties and /revisits
 apiRouter.use('/', subscriptionsRoutes); // mounts /subscription-plans and /subscriptions
 apiRouter.use('/admin', adminRoutes);
+apiRouter.use('/uploads', uploadsRoutes);
 
 export default apiRouter;

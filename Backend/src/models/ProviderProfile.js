@@ -121,6 +121,10 @@ const providerProfileSchema = new mongoose.Schema(
       default: 'DRAFT',
       index: true,
     },
+    rejectionReason: {
+      type: String,
+      default: '',
+    },
     verificationNotes: {
       type: String,
       default: '',

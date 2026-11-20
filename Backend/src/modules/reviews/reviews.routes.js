@@ -13,6 +13,7 @@ router.get('/provider/:id', getProviderReviews);
 
 router.use(authenticateToken);
 router.post('/', requireRole('CUSTOMER'), submitReview);
+router.get('/my', getMyReviews);
 router.get('/my-reviews', getMyReviews);
 router.patch('/:id/reply', requireRole('PROVIDER'), replyToReview);
 

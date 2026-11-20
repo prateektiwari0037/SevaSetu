@@ -219,6 +219,7 @@ export default function App() {
         <Route index element={<Navigate to="/shop/dashboard" replace />} />
         <Route path="dashboard" element={<ShopDashboard />} />
         <Route path="catalog" element={<ShopCatalog />} />
+        <Route path="catalog/new" element={<ShopCatalog autoOpenAdd={true} />} />
         <Route path="inquiries" element={<ShopInquiries />} />
         <Route path="verification" element={<ShopVerification />} />
         <Route path="profile" element={<ShopProfile />} />

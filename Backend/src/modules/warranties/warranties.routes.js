@@ -1,17 +1,28 @@
 import { Router } from 'express';
 import {
-  getWarrantyByBooking,
+  getMyWarranties,
   createRevisitRequest,
-  getRevisits,
+  getWarrantyByBooking,
   updateRevisitStatus,
 } from './warranties.controller.js';
 import { authenticateToken } from '../../middleware/auth.js';
 
 const router = Router();
 
-router.get('/warranties/booking/:bookingId', authenticateToken, getWarrantyByBooking);
-router.post('/revisits', authenticateToken, createRevisitRequest);
-router.get('/revisits', authenticateToken, getRevisits);
-router.patch('/revisits/:id/status', authenticateToken, updateRevisitStatus);
+router.use(authenticateToken);
+
+// PRD standard routes
+router.get('/warranties/my', getMyWarranties);
+router.post('/warranties/:id/revisits', createRevisitRequest);
+router.get('/warranties/booking/:bookingId', getWarrantyByBooking);
+
+// Legacy routes for backwards compatibility
+router.post('/revisits', (req, res, next) => {
+  // If bookingId passed in body, treat as revisit for that booking/warranty
+  req.params.id = req.body.warrantyId || req.body.bookingId;
+  return createRevisitRequest(req, res, next);
+});
+router.get('/revisits', getMyWarranties);
+router.patch('/revisits/:id/status', updateRevisitStatus);
 
 export default router;

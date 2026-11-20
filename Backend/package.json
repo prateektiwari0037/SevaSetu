@@ -10,7 +10,7 @@
     "seed": "node src/scripts/seedMongo.js",
     "migrate": "node src/scripts/migratePostgresToMongo.js",
     "verify": "node src/scripts/verifyMigration.js",
-    "test": "node --test tests/**/*.test.js",
+    "test": "node --test --test-concurrency=1 tests/**/*.test.js",
     "prisma:generate": "npx prisma generate",
     "prisma:seed": "node src/scripts/seedMongo.js"
   },

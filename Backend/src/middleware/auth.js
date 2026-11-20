@@ -4,7 +4,8 @@ import ProviderProfile from '../models/ProviderProfile.js';
 import ShopProfile from '../models/ShopProfile.js';
 import { errorResponse } from '../utils/apiResponse.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'sevasetu_jwt_super_secret_production_key_2026';
+const getJwtSecret = () =>
+  process.env.JWT_SECRET || 'sevasetu_jwt_super_secret_production_key_2026';
 
 /**
  * Primary Authentication Middleware
@@ -27,7 +28,7 @@ export const authenticate = async (req, res, next) => {
 
     let decoded;
     try {
-      decoded = jwt.verify(token, JWT_SECRET);
+      decoded = jwt.verify(token, getJwtSecret());
     } catch (err) {
       if (err.name === 'TokenExpiredError') {
         return errorResponse(res, 'Session expired. Please refresh your session or log in again.', 401);
@@ -71,7 +72,7 @@ export const optionalAuth = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
-      const decoded = jwt.verify(token, JWT_SECRET);
+      const decoded = jwt.verify(token, getJwtSecret());
       const user = await User.findById(decoded.userId)
         .populate('customerProfile')
         .populate('providerProfile')

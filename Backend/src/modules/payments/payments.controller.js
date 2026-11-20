@@ -7,7 +7,11 @@ import {
   Notification,
 } from '../../models/index.js';
 import { successResponse, errorResponse } from '../../utils/apiResponse.js';
+import NotificationService from '../../services/notification.service.js';
 
+/**
+ * 1. CREATE PAYMENT RECORD (Cash on Service)
+ */
 export const createOrder = async (req, res, next) => {
   try {
     const { bookingId, paymentMethod = 'CASH_ON_SERVICE' } = req.body;
@@ -23,27 +27,40 @@ export const createOrder = async (req, res, next) => {
     ]);
 
     if (!booking) return errorResponse(res, 'Booking not found', 404);
+
     if (booking.isPaid) {
-      return errorResponse(res, 'This booking has already been paid', 400);
+      return errorResponse(res, 'This booking has already been paid and settled', 400);
     }
 
-    const transactionId = `TXN-${Date.now()}-${crypto.randomInt(1000, 9999)}`;
+    const transactionId = `TXN-COS-${Date.now()}-${crypto.randomInt(1000, 9999)}`;
+    const amountPaise = booking.priceSnapshot?.totalPaise || Math.round(booking.totalAmount * 100);
+    const commissionPaise = Math.round(amountPaise * 0.1);
+    const providerEarningsPaise = amountPaise - commissionPaise;
 
-    let payment = await Payment.findOne({ bookingId: booking._id });
-    if (!payment) {
-      payment = await Payment.create({
+    const payment = await Payment.findOneAndUpdate(
+      { bookingId: booking._id },
+      {
         bookingId: booking._id,
         transactionId,
         amount: booking.totalAmount,
+        amountInPaise: amountPaise,
+        commissionRate: 0.1,
+        commissionInPaise: commissionPaise,
+        providerEarningsPaise: providerEarningsPaise,
         paymentMethod,
-        status: 'PENDING',
-        notes: `Payment for booking #${booking.bookingNumber}`,
-      });
-    }
+        status: 'UNPAID',
+        collectionStatus: 'UNPAID',
+        notes: `Cash collection registered for booking #${booking.bookingNumber}`,
+      },
+      { upsert: true, returnDocument: 'after' }
+    );
 
-    return successResponse(res, 'Cash collection order registered', {
+    return successResponse(res, 'Cash on Service payment initialized', {
       payment,
+      paymentMethod,
       amount: booking.totalAmount,
+      amountDue: booking.totalAmount,
+      amountDuePaise: amountPaise,
       currency: 'INR',
       bookingNumber: booking.bookingNumber,
     });
@@ -52,15 +69,19 @@ export const createOrder = async (req, res, next) => {
   }
 };
 
+/**
+ * 2. VERIFY / CONFIRM PAYMENT
+ */
 export const verifyPayment = async (req, res, next) => {
   try {
-    const { paymentId, transactionId, paymentMethod = 'CASH_ON_SERVICE' } = req.body;
+    const { paymentId, bookingId, transactionId, paymentMethod = 'CASH_ON_SERVICE' } = req.body;
 
-    const query = {};
-    if (paymentId) query._id = paymentId;
-    if (transactionId) query.transactionId = transactionId;
+    const filter = {};
+    if (paymentId) filter._id = paymentId;
+    if (bookingId) filter.bookingId = bookingId;
+    if (transactionId) filter.transactionId = transactionId;
 
-    const payment = await Payment.findOne(query).populate({
+    const payment = await Payment.findOne(filter).populate({
       path: 'bookingId',
       populate: [
         { path: 'customerId', populate: { path: 'userId' } },
@@ -70,27 +91,32 @@ export const verifyPayment = async (req, res, next) => {
 
     if (!payment) return errorResponse(res, 'Payment record not found', 404);
 
+    const userId = req.user._id || req.user.id;
+    payment.collectionStatus = 'CONFIRMED';
     payment.status = 'PAID';
     payment.paymentMethod = paymentMethod;
-    payment.collectedAt = new Date();
-    payment.collectedBy = req.user._id || req.user.id;
+    payment.confirmedAt = new Date();
+    payment.collectedAt = payment.confirmedAt;
+    payment.confirmedBy = userId;
+    payment.collectedBy = userId;
     await payment.save();
 
-    // Mark booking as paid
     if (payment.bookingId) {
-      await Booking.findByIdAndUpdate(payment.bookingId._id, {
+      await Booking.findByIdAndUpdate(payment.bookingId._id || payment.bookingId, {
+        collectionStatus: 'CONFIRMED',
+        paymentStatus: 'PAID',
         isPaid: true,
         paymentMethod,
       });
     }
 
-    // Notifications
+    // Notify customer
     const customerUserId = payment.bookingId?.customerId?.userId?._id;
     if (customerUserId) {
-      await Notification.create({
+      await NotificationService.sendNotification({
         userId: customerUserId,
         title: 'Payment Recorded',
-        message: `Cash collection of ₹${payment.amount} for booking #${payment.bookingId?.bookingNumber} confirmed.`,
+        message: `Cash collection of ₹${payment.amount} for booking #${payment.bookingId?.bookingNumber || ''} confirmed.`,
         type: 'PAYMENT',
         link: `/customer/bookings/${payment.bookingId?._id}`,
       });
@@ -102,6 +128,9 @@ export const verifyPayment = async (req, res, next) => {
   }
 };
 
+/**
+ * 3. GET PAYMENT BY ID
+ */
 export const getPaymentById = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -114,7 +143,7 @@ export const getPaymentById = async (req, res, next) => {
       ],
     });
 
-    if (!payment) return errorResponse(res, 'Payment not found', 404);
+    if (!payment) return errorResponse(res, 'Payment record not found', 404);
 
     return successResponse(res, 'Payment retrieved', payment);
   } catch (error) {
@@ -122,15 +151,19 @@ export const getPaymentById = async (req, res, next) => {
   }
 };
 
+/**
+ * 4. GET PAYMENT HISTORY
+ */
 export const getPaymentHistory = async (req, res, next) => {
   try {
+    const userId = req.user._id || req.user.id;
     let bookingFilter = {};
 
     if (req.user.role === 'CUSTOMER') {
-      const customer = await CustomerProfile.findOne({ userId: req.user._id || req.user.id });
+      const customer = await CustomerProfile.findOne({ userId });
       if (customer) bookingFilter.customerId = customer._id;
     } else if (req.user.role === 'PROVIDER') {
-      const provider = await ProviderProfile.findOne({ userId: req.user._id || req.user.id });
+      const provider = await ProviderProfile.findOne({ userId });
       if (provider) bookingFilter.providerId = provider._id;
     }
 
@@ -154,20 +187,41 @@ export const getPaymentHistory = async (req, res, next) => {
   }
 };
 
+/**
+ * 5. REQUEST REFUND OR DISPUTE
+ */
 export const requestRefund = async (req, res, next) => {
   try {
-    const { paymentId, reason } = req.body;
-    if (!paymentId || !reason) {
-      return errorResponse(res, 'Payment ID and reason are required', 400);
+    const { paymentId, bookingId, reason } = req.body;
+    if (!reason) {
+      return errorResponse(res, 'Reason is required for refund or dispute', 400);
     }
 
-    const payment = await Payment.findById(paymentId);
-    if (!payment) return errorResponse(res, 'Payment not found', 404);
+    const filter = {};
+    if (paymentId) filter._id = paymentId;
+    if (bookingId) filter.bookingId = bookingId;
 
-    payment.notes = `${payment.notes || ''} [Refund requested: ${reason}]`;
+    if (!paymentId && !bookingId) {
+      return errorResponse(res, 'Payment ID or Booking ID is required', 400);
+    }
+
+    const payment = await Payment.findOne(filter);
+    if (!payment) return errorResponse(res, 'Payment record not found', 404);
+
+    payment.collectionStatus = 'DISPUTED';
+    payment.status = 'DISPUTED';
+    payment.disputeReason = reason;
+    payment.notes = `${payment.notes || ''} [Refund requested: ${reason}]`.trim();
     await payment.save();
 
-    return successResponse(res, 'Refund request submitted for admin review', payment);
+    if (payment.bookingId) {
+      await Booking.findByIdAndUpdate(payment.bookingId, {
+        collectionStatus: 'DISPUTED',
+        disputeReason: reason,
+      });
+    }
+
+    return successResponse(res, 'Dispute / adjustment request submitted', payment);
   } catch (error) {
     next(error);
   }

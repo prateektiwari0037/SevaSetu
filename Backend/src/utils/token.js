@@ -2,8 +2,11 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import RefreshSession from '../models/RefreshSession.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'sevasetu_jwt_super_secret_production_key_2026';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '15m';
+export const getJwtSecret = () =>
+  process.env.JWT_SECRET || 'sevasetu_jwt_super_secret_production_key_2026';
+
+export const getJwtExpiresIn = () => process.env.JWT_EXPIRES_IN || '15m';
+
 const REFRESH_DAYS = 7;
 
 export function generateAccessToken(user) {
@@ -13,8 +16,8 @@ export function generateAccessToken(user) {
       email: user.email,
       role: user.role,
     },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN }
+    getJwtSecret(),
+    { expiresIn: getJwtExpiresIn() }
   );
 }
 
