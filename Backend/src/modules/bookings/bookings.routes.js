@@ -8,6 +8,9 @@ import {
   startBookingWork,
   completeBooking,
   cancelBooking,
+  reportCashCollection,
+  confirmCashCollection,
+  disputeCashCollection,
 } from './bookings.controller.js';
 import { authenticateToken } from '../../middleware/auth.js';
 
@@ -19,7 +22,7 @@ router.post('/', createBooking);
 router.get('/', getBookings);
 router.get('/:id', getBookingById);
 
-// Support both POST (PRD requirement) and PATCH (legacy frontend)
+// Booking Lifecycle
 router.post('/:id/accept', acceptBooking);
 router.patch('/:id/accept', acceptBooking);
 
@@ -34,5 +37,10 @@ router.patch('/:id/complete', completeBooking);
 
 router.post('/:id/cancel', cancelBooking);
 router.patch('/:id/cancel', cancelBooking);
+
+// Cash on Service Collection
+router.post('/:id/collection/report', reportCashCollection);
+router.post('/:id/collection/confirm', confirmCashCollection);
+router.post('/:id/collection/dispute', disputeCashCollection);
 
 export default router;

@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import {
   createEmergencyRequest,
-  getEmergencyRequests,
+  getMyEmergencyRequests,
+  respondToEmergencyRequest,
   getEmergencyDetails,
 } from './emergency.controller.js';
 import { authenticateToken } from '../../middleware/auth.js';
@@ -11,7 +12,9 @@ const router = Router();
 router.use(authenticateToken);
 
 router.post('/', createEmergencyRequest);
-router.get('/', getEmergencyRequests);
+router.get('/my', getMyEmergencyRequests);
+router.get('/', getMyEmergencyRequests);
+router.post('/:id/respond', respondToEmergencyRequest);
 router.get('/:id', getEmergencyDetails);
 
 export default router;

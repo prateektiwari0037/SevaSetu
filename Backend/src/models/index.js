@@ -15,6 +15,10 @@ import Review from './Review.js';
 import Warranty from './Warranty.js';
 import Complaint from './Complaint.js';
 import Notification from './Notification.js';
+import Product from './Product.js';
+import ShopInquiry from './ShopInquiry.js';
+import EmergencyRequest from './EmergencyRequest.js';
+import SlotReservation from './SlotReservation.js';
 
 export {
   User,
@@ -34,4 +38,8 @@ export {
   Warranty,
   Complaint,
   Notification,
+  Product,
+  ShopInquiry,
+  EmergencyRequest,
+  SlotReservation,
 };

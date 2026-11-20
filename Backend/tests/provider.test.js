@@ -494,4 +494,11 @@ describe('SevaSetu Member 3 - Service Provider Module PRD Tests', () => {
     assert.equal(addServiceRes.status, 403);
     assert.equal(addServiceRes.data.success, false);
   });
+
+  after(async () => {
+    if (server) {
+      await new Promise((resolve) => server.close(resolve));
+    }
+    await disconnectDB();
+  });
 });

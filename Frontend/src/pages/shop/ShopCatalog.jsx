@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Package, Plus, Trash2, Edit3, CheckCircle2 } from 'lucide-react';
 import api from '../../services/api';
 
-export default function ShopCatalog() {
+export default function ShopCatalog({ autoOpenAdd = false }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Modal State
-  const [modalOpen, setModalOpen] = useState(false);
+  const [modalOpen, setModalOpen] = useState(autoOpenAdd);
   const [editingId, setEditingId] = useState(null);
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Hardware');

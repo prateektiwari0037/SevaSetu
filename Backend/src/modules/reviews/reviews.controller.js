@@ -47,6 +47,7 @@ export const submitReview = async (req, res, next) => {
       bookingId: booking._id,
       customerId: customer._id,
       providerId: booking.providerId,
+      serviceId: booking.serviceId,
       rating: ratingNum,
       comment: comment || '',
     });
