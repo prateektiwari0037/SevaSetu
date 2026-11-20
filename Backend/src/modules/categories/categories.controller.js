@@ -1,4 +1,4 @@
-import { Category, Service } from '../../models/index.js';
+import { Category, Service, Booking } from '../../models/index.js';
 import { successResponse, errorResponse } from '../../utils/apiResponse.js';
 
 export const getCategories = async (req, res, next) => {
@@ -124,10 +124,34 @@ export const updateCategory = async (req, res, next) => {
 export const deleteCategory = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const category = await Category.findByIdAndDelete(id);
+
+    // Check if category exists
+    const category = await Category.findById(id);
     if (!category) {
       return errorResponse(res, 'Category not found', 404);
     }
+
+    // Check if any services in this category are referenced by historical bookings
+    const services = await Service.find({ categoryId: category._id });
+    const serviceIds = services.map((s) => s._id);
+
+    const historicalBookingsCount = await Booking.countDocuments({
+      serviceId: { $in: serviceIds },
+    });
+
+    if (historicalBookingsCount > 0) {
+      // PRD Section 5: Avoid deleting categories referenced by historical bookings
+      // Instead, disable category to preserve data integrity
+      category.isActive = false;
+      await category.save();
+      return successResponse(
+        res,
+        `Category is referenced by ${historicalBookingsCount} historical booking(s). It has been disabled instead of deleted to protect order history integrity.`,
+        category
+      );
+    }
+
+    await Category.findByIdAndDelete(id);
     return successResponse(res, 'Category deleted successfully');
   } catch (error) {
     next(error);

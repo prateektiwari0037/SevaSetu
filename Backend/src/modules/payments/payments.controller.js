@@ -1,20 +1,26 @@
 import crypto from 'crypto';
-import prisma from '../../config/db.js';
+import {
+  Payment,
+  Booking,
+  CustomerProfile,
+  ProviderProfile,
+  Notification,
+} from '../../models/index.js';
 import { successResponse, errorResponse } from '../../utils/apiResponse.js';
-import { DEFAULT_COMMISSION_RATE } from '../../config/constants.js';
 
 export const createOrder = async (req, res, next) => {
   try {
-    const { bookingId, paymentMethod = 'ONLINE' } = req.body;
+    const { bookingId, paymentMethod = 'CASH_ON_SERVICE' } = req.body;
 
     if (!bookingId) {
       return errorResponse(res, 'Booking ID is required', 400);
     }
 
-    const booking = await prisma.booking.findUnique({
-      where: { id: bookingId },
-      include: { customer: true, provider: true, service: true },
-    });
+    const booking = await Booking.findById(bookingId).populate([
+      { path: 'customerId', populate: { path: 'userId' } },
+      { path: 'providerId', populate: { path: 'userId' } },
+      { path: 'serviceId' },
+    ]);
 
     if (!booking) return errorResponse(res, 'Booking not found', 404);
     if (booking.isPaid) {
@@ -22,23 +28,22 @@ export const createOrder = async (req, res, next) => {
     }
 
     const transactionId = `TXN-${Date.now()}-${crypto.randomInt(1000, 9999)}`;
-    const gatewayOrderId = paymentMethod === 'ONLINE' ? `order_sevasetu_${Date.now()}` : null;
 
-    const payment = await prisma.payment.create({
-      data: {
-        bookingId: booking.id,
+    let payment = await Payment.findOne({ bookingId: booking._id });
+    if (!payment) {
+      payment = await Payment.create({
+        bookingId: booking._id,
         transactionId,
-        paymentGatewayOrderId: gatewayOrderId,
         amount: booking.totalAmount,
-        paymentMethod: paymentMethod === 'CASH' ? 'CASH' : 'ONLINE',
-        status: paymentMethod === 'CASH' ? 'PENDING' : 'PROCESSING',
-      },
-    });
+        paymentMethod,
+        status: 'PENDING',
+        notes: `Payment for booking #${booking.bookingNumber}`,
+      });
+    }
 
-    return successResponse(res, 'Payment order created', {
+    return successResponse(res, 'Cash collection order registered', {
       payment,
-      keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_sevasetu2026',
-      amount: booking.totalAmount * 100, // in paise if gateway
+      amount: booking.totalAmount,
       currency: 'INR',
       bookingNumber: booking.bookingNumber,
     });
@@ -49,103 +54,49 @@ export const createOrder = async (req, res, next) => {
 
 export const verifyPayment = async (req, res, next) => {
   try {
-    const { paymentId, transactionId, paymentMethod = 'ONLINE' } = req.body;
+    const { paymentId, transactionId, paymentMethod = 'CASH_ON_SERVICE' } = req.body;
 
-    const payment = await prisma.payment.findFirst({
-      where: {
-        OR: [
-          ...(paymentId ? [{ id: paymentId }] : []),
-          ...(transactionId ? [{ transactionId }] : []),
-        ],
-      },
-      include: {
-        booking: {
-          include: { provider: true, customer: true, service: true },
-        },
-      },
+    const query = {};
+    if (paymentId) query._id = paymentId;
+    if (transactionId) query.transactionId = transactionId;
+
+    const payment = await Payment.findOne(query).populate({
+      path: 'bookingId',
+      populate: [
+        { path: 'customerId', populate: { path: 'userId' } },
+        { path: 'providerId', populate: { path: 'userId' } },
+      ],
     });
 
     if (!payment) return errorResponse(res, 'Payment record not found', 404);
-    if (payment.status === 'SUCCESSFUL') {
-      return successResponse(res, 'Payment already verified successfully', payment);
+
+    payment.status = 'PAID';
+    payment.paymentMethod = paymentMethod;
+    payment.collectedAt = new Date();
+    payment.collectedBy = req.user._id || req.user.id;
+    await payment.save();
+
+    // Mark booking as paid
+    if (payment.bookingId) {
+      await Booking.findByIdAndUpdate(payment.bookingId._id, {
+        isPaid: true,
+        paymentMethod,
+      });
     }
 
-    const commissionRate = DEFAULT_COMMISSION_RATE;
-    const commissionAmount = Math.round(payment.amount * commissionRate * 100) / 100;
-    const providerEarning = Math.round((payment.amount - commissionAmount) * 100) / 100;
-
-    const result = await prisma.$transaction(async (tx) => {
-      // 1. Update Payment status
-      const updatedPayment = await tx.payment.update({
-        where: { id: payment.id },
-        data: {
-          status: 'SUCCESSFUL',
-          paymentMethod: paymentMethod === 'CASH' ? 'CASH' : 'ONLINE',
-          gatewayResponse: JSON.stringify({
-            verifiedAt: new Date().toISOString(),
-            status: 'CAPTURED',
-            verifiedBy: req.user.email,
-          }),
-        },
+    // Notifications
+    const customerUserId = payment.bookingId?.customerId?.userId?._id;
+    if (customerUserId) {
+      await Notification.create({
+        userId: customerUserId,
+        title: 'Payment Recorded',
+        message: `Cash collection of ₹${payment.amount} for booking #${payment.bookingId?.bookingNumber} confirmed.`,
+        type: 'PAYMENT',
+        link: `/customer/bookings/${payment.bookingId?._id}`,
       });
+    }
 
-      // 2. Mark booking as paid
-      await tx.booking.update({
-        where: { id: payment.bookingId },
-        data: {
-          isPaid: true,
-          paymentMethod: paymentMethod === 'CASH' ? 'CASH' : 'ONLINE',
-        },
-      });
-
-      // 3. Create platform commission record if provider assigned
-      if (payment.booking.providerId) {
-        await tx.platformCommission.upsert({
-          where: { paymentId: payment.id },
-          create: {
-            paymentId: payment.id,
-            providerId: payment.booking.providerId,
-            grossAmount: payment.amount,
-            commissionRate,
-            commissionAmount,
-            providerEarning,
-          },
-          update: {
-            grossAmount: payment.amount,
-            commissionRate,
-            commissionAmount,
-            providerEarning,
-          },
-        });
-      }
-
-      // 4. Notifications
-      await tx.notification.create({
-        data: {
-          userId: payment.booking.customer.userId,
-          title: 'Payment Successful',
-          message: `Payment of ₹${payment.amount} for booking #${payment.booking.bookingNumber} was received.`,
-          type: 'PAYMENT',
-          link: `/customer/bookings/${payment.bookingId}`,
-        },
-      });
-
-      if (payment.booking.provider) {
-        await tx.notification.create({
-          data: {
-            userId: payment.booking.provider.userId,
-            title: 'Payment Credited',
-            message: `Payment for booking #${payment.booking.bookingNumber} confirmed. Your net earning: ₹${providerEarning}.`,
-            type: 'PAYMENT',
-            link: '/provider/earnings',
-          },
-        });
-      }
-
-      return updatedPayment;
-    });
-
-    return successResponse(res, 'Payment verified and settled successfully', result);
+    return successResponse(res, 'Payment verified and settled successfully', payment);
   } catch (error) {
     next(error);
   }
@@ -154,15 +105,13 @@ export const verifyPayment = async (req, res, next) => {
 export const getPaymentById = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const payment = await prisma.payment.findUnique({
-      where: { id },
-      include: {
-        booking: {
-          include: { customer: true, provider: true, service: true },
-        },
-        commission: true,
-        refunds: true,
-      },
+    const payment = await Payment.findById(id).populate({
+      path: 'bookingId',
+      populate: [
+        { path: 'customerId', populate: { path: 'userId' } },
+        { path: 'providerId', populate: { path: 'userId' } },
+        { path: 'serviceId' },
+      ],
     });
 
     if (!payment) return errorResponse(res, 'Payment not found', 404);
@@ -175,30 +124,29 @@ export const getPaymentById = async (req, res, next) => {
 
 export const getPaymentHistory = async (req, res, next) => {
   try {
-    let where = {};
+    let bookingFilter = {};
 
     if (req.user.role === 'CUSTOMER') {
-      const customer = await prisma.customerProfile.findUnique({
-        where: { userId: req.user.id },
-      });
-      if (customer) where.booking = { customerId: customer.id };
+      const customer = await CustomerProfile.findOne({ userId: req.user._id || req.user.id });
+      if (customer) bookingFilter.customerId = customer._id;
     } else if (req.user.role === 'PROVIDER') {
-      const provider = await prisma.providerProfile.findUnique({
-        where: { userId: req.user.id },
-      });
-      if (provider) where.booking = { providerId: provider.id };
+      const provider = await ProviderProfile.findOne({ userId: req.user._id || req.user.id });
+      if (provider) bookingFilter.providerId = provider._id;
     }
 
-    const payments = await prisma.payment.findMany({
-      where,
-      include: {
-        booking: {
-          include: { customer: true, provider: true, service: true },
-        },
-        commission: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const bookings = await Booking.find(bookingFilter).select('_id');
+    const bookingIds = bookings.map((b) => b._id);
+
+    const payments = await Payment.find({ bookingId: { $in: bookingIds } })
+      .sort({ createdAt: -1 })
+      .populate({
+        path: 'bookingId',
+        populate: [
+          { path: 'customerId', populate: { path: 'userId', select: 'fullName email' } },
+          { path: 'providerId', populate: { path: 'userId', select: 'fullName email' } },
+          { path: 'serviceId', select: 'name basePrice' },
+        ],
+      });
 
     return successResponse(res, 'Payment history retrieved', payments);
   } catch (error) {
@@ -208,28 +156,18 @@ export const getPaymentHistory = async (req, res, next) => {
 
 export const requestRefund = async (req, res, next) => {
   try {
-    const { paymentId, amount, reason } = req.body;
-
+    const { paymentId, reason } = req.body;
     if (!paymentId || !reason) {
       return errorResponse(res, 'Payment ID and reason are required', 400);
     }
 
-    const payment = await prisma.payment.findUnique({
-      where: { id: paymentId },
-    });
-
+    const payment = await Payment.findById(paymentId);
     if (!payment) return errorResponse(res, 'Payment not found', 404);
 
-    const refund = await prisma.refund.create({
-      data: {
-        paymentId,
-        amount: amount ? parseFloat(amount) : payment.amount,
-        reason,
-        status: 'PENDING',
-      },
-    });
+    payment.notes = `${payment.notes || ''} [Refund requested: ${reason}]`;
+    await payment.save();
 
-    return successResponse(res, 'Refund request submitted for admin review', refund, 201);
+    return successResponse(res, 'Refund request submitted for admin review', payment);
   } catch (error) {
     next(error);
   }

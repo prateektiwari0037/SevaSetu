@@ -15,6 +15,9 @@ import Review from './Review.js';
 import Warranty from './Warranty.js';
 import Complaint from './Complaint.js';
 import Notification from './Notification.js';
+import PlatformSetting from './PlatformSetting.js';
+import SubscriptionPlan from './SubscriptionPlan.js';
+import Subscription from './Subscription.js';
 
 export {
   User,
@@ -34,4 +37,7 @@ export {
   Warranty,
   Complaint,
   Notification,
+  PlatformSetting,
+  SubscriptionPlan,
+  Subscription,
 };
