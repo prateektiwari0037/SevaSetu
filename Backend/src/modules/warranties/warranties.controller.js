@@ -15,14 +15,15 @@ import NotificationService from '../../services/notification.service.js';
  */
 export const getMyWarranties = async (req, res, next) => {
   try {
+    const userId = req.user._id || req.user.id;
     let filter = {};
 
     if (req.user.role === 'CUSTOMER') {
-      const customer = await CustomerProfile.findOne({ userId: req.user.id });
+      const customer = await CustomerProfile.findOne({ userId });
       if (!customer) return successResponse(res, 'No warranties found', []);
       filter.customerId = customer._id;
     } else if (req.user.role === 'PROVIDER') {
-      const provider = await ProviderProfile.findOne({ userId: req.user.id });
+      const provider = await ProviderProfile.findOne({ userId });
       if (!provider) return successResponse(res, 'No warranties found', []);
       filter.providerId = provider._id;
     }
@@ -32,11 +33,11 @@ export const getMyWarranties = async (req, res, next) => {
       .populate('bookingId', 'bookingNumber serviceAddress bookingDate totalAmount')
       .populate({
         path: 'providerId',
-        populate: { path: 'userId', select: 'fullName email phone' },
+        populate: { path: 'userId', select: 'fullName email phone mobile' },
       })
       .populate({
         path: 'customerId',
-        populate: { path: 'userId', select: 'fullName email phone' },
+        populate: { path: 'userId', select: 'fullName email phone mobile' },
       })
       .sort({ createdAt: -1 })
       .lean();
@@ -68,23 +69,24 @@ export const getMyWarranties = async (req, res, next) => {
 
 /**
  * 2. CREATE WARRANTY REVISIT REQUEST
- * POST /api/v1/warranties/:id/revisits
+ * POST /api/v1/warranties/:id/revisits  or  POST /api/v1/revisits
  */
 export const createRevisitRequest = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const { reason, preferredDate } = req.body;
+    const id = req.params.id || req.body.warrantyId || req.body.bookingId;
+    const { reason, preferredDate, scheduledDate } = req.body;
 
     if (!reason) {
       return errorResponse(res, 'Reason for warranty revisit is required', 400);
     }
 
-    const customer = await CustomerProfile.findOne({ userId: req.user.id });
+    const userId = req.user._id || req.user.id;
+    const customer = await CustomerProfile.findOne({ userId });
     if (!customer) return errorResponse(res, 'Customer profile required', 403);
 
     // Find warranty either by warranty _id or bookingId
     let warranty = null;
-    if (id.match(/^[0-9a-fA-F]{24}$/)) {
+    if (id && id.toString().match(/^[0-9a-fA-F]{24}$/)) {
       warranty = await Warranty.findOne({
         $or: [{ _id: id }, { bookingId: id }],
       }).populate('bookingId providerId');
@@ -121,15 +123,23 @@ export const createRevisitRequest = async (req, res, next) => {
     }
 
     const revisitNumber = `REV-${Date.now().toString().slice(-6)}-${crypto.randomInt(100, 999)}`;
+    const prefDate = preferredDate || scheduledDate ? new Date(preferredDate || scheduledDate) : null;
     const newRevisit = {
       revisitNumber,
+      customerId: customer._id,
+      providerId: warranty.providerId?._id || warranty.providerId || null,
       reason: reason.trim(),
-      preferredDate: preferredDate ? new Date(preferredDate) : null,
+      preferredDate: prefDate,
+      scheduledDate: prefDate,
       status: 'PENDING',
       requestedAt: new Date(),
     };
 
+    if (!warranty.revisits) warranty.revisits = [];
+    if (!warranty.revisitRequests) warranty.revisitRequests = [];
+
     warranty.revisits.push(newRevisit);
+    warranty.revisitRequests.push(newRevisit);
     await warranty.save();
 
     // Notify provider
@@ -144,11 +154,17 @@ export const createRevisitRequest = async (req, res, next) => {
       });
     }
 
-    return successResponse(res, 'Warranty revisit request submitted successfully', {
-      warrantyId: warranty._id,
-      certificateNumber: warranty.certificateNumber,
-      revisit: newRevisit,
-    }, 201);
+    return successResponse(
+      res,
+      'Warranty revisit request submitted successfully',
+      {
+        warrantyId: warranty._id,
+        certificateNumber: warranty.certificateNumber,
+        revisit: newRevisit,
+        ...newRevisit,
+      },
+      201
+    );
   } catch (error) {
     next(error);
   }
@@ -162,15 +178,16 @@ export const getWarrantyByBooking = async (req, res, next) => {
   try {
     const { bookingId } = req.params;
     const warranty = await Warranty.findOne({ bookingId })
-      .populate('serviceId')
+      .populate('serviceId', 'name basePrice durationMinutes description')
       .populate({
         path: 'providerId',
-        populate: { path: 'userId', select: 'fullName email phone' },
+        populate: { path: 'userId', select: 'fullName email phone mobile' },
       })
       .populate({
         path: 'customerId',
-        populate: { path: 'userId', select: 'fullName email phone' },
+        populate: { path: 'userId', select: 'fullName email phone mobile' },
       })
+      .populate('bookingId')
       .lean();
 
     if (!warranty) {
@@ -186,6 +203,7 @@ export const getWarrantyByBooking = async (req, res, next) => {
     return successResponse(res, 'Warranty details retrieved', {
       ...warranty,
       id: warranty._id.toString(),
+      endDate: warranty.validUntil,
       isExpired,
       daysRemaining: isExpired ? 0 : daysRemaining,
     });
@@ -195,42 +213,116 @@ export const getWarrantyByBooking = async (req, res, next) => {
 };
 
 /**
- * 4. UPDATE REVISIT STATUS (Provider / Admin Action)
+ * 4. GET REVISITS (Admin / List)
+ * GET /api/v1/revisits
+ */
+export const getRevisits = async (req, res, next) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    const warranties = await Warranty.find({
+      $or: [{ 'revisits.0': { $exists: true } }, { 'revisitRequests.0': { $exists: true } }],
+    }).populate({
+      path: 'bookingId',
+      populate: [
+        { path: 'serviceId', select: 'name' },
+        { path: 'customerId', populate: { path: 'userId', select: 'fullName email mobile' } },
+        { path: 'providerId', populate: { path: 'userId', select: 'fullName mobile' } },
+      ],
+    });
+
+    let revisits = [];
+    for (const w of warranties) {
+      const list = (w.revisits && w.revisits.length) ? w.revisits : (w.revisitRequests || []);
+      for (const r of list) {
+        revisits.push({
+          ...(r.toObject ? r.toObject() : r),
+          warrantyId: w._id,
+          booking: w.bookingId,
+        });
+      }
+    }
+
+    if (req.user.role === 'CUSTOMER') {
+      const customer = await CustomerProfile.findOne({ userId });
+      if (customer) {
+        revisits = revisits.filter((r) => r.customerId?.toString() === customer._id.toString());
+      }
+    } else if (req.user.role === 'PROVIDER') {
+      const provider = await ProviderProfile.findOne({ userId });
+      if (provider) {
+        revisits = revisits.filter((r) => r.providerId?.toString() === provider._id.toString());
+      }
+    }
+
+    return successResponse(res, 'Revisits retrieved', revisits);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * 5. UPDATE REVISIT STATUS (Provider / Admin Action)
  * PATCH /api/v1/revisits/:id/status
  */
 export const updateRevisitStatus = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { status, scheduledDate, providerNotes = '' } = req.body;
+    const { status, scheduledDate, preferredDate, providerNotes = '' } = req.body;
 
-    if (!['ACCEPTED', 'REJECTED', 'COMPLETED'].includes(status)) {
+    if (status && !['ACCEPTED', 'REJECTED', 'COMPLETED', 'PENDING'].includes(status)) {
       return errorResponse(res, 'Status must be ACCEPTED, REJECTED, or COMPLETED', 400);
     }
 
-    // Find the warranty containing this revisit
-    const warranty = await Warranty.findOne({ 'revisits._id': id }).populate('customerId');
+    const warranty = await Warranty.findOne({
+      $or: [{ 'revisits._id': id }, { 'revisitRequests._id': id }],
+    }).populate({
+      path: 'bookingId',
+      populate: { path: 'customerId', populate: { path: 'userId' } },
+    }).populate('customerId');
+
     if (!warranty) return errorResponse(res, 'Revisit request not found', 404);
 
-    const revisit = warranty.revisits.id(id);
+    const revisit = (warranty.revisits && warranty.revisits.id(id)) ||
+                    (warranty.revisitRequests && warranty.revisitRequests.id(id));
+
     if (!revisit) return errorResponse(res, 'Revisit request not found', 404);
 
-    revisit.status = status;
-    if (providerNotes) revisit.providerNotes = providerNotes;
-    if (scheduledDate) revisit.preferredDate = new Date(scheduledDate);
+    if (status) revisit.status = status;
+    if (providerNotes !== undefined) revisit.providerNotes = providerNotes;
+    const dateVal = scheduledDate || preferredDate;
+    if (dateVal) {
+      revisit.scheduledDate = new Date(dateVal);
+      revisit.preferredDate = new Date(dateVal);
+    }
     if (['REJECTED', 'COMPLETED'].includes(status)) {
       revisit.resolvedAt = new Date();
+    }
+
+    // Keep both collections in sync
+    if (warranty.revisits?.id(id)) {
+      const revReq = warranty.revisitRequests?.id(id);
+      if (revReq) {
+        if (status) revReq.status = status;
+        if (providerNotes !== undefined) revReq.providerNotes = providerNotes;
+        if (dateVal) revReq.scheduledDate = new Date(dateVal);
+      }
     }
 
     await warranty.save();
 
     // Notify customer
-    const customerUserId = warranty.customerId?.userId?._id || warranty.customerId?.userId;
+    const customerUserId =
+      warranty.customerId?.userId?._id ||
+      warranty.customerId?.userId ||
+      warranty.bookingId?.customerId?.userId?._id;
+
     if (customerUserId) {
       await NotificationService.sendNotification({
         userId: customerUserId,
-        title: `Warranty Revisit ${status}`,
-        message: `Your warranty revisit request (#${revisit.revisitNumber}) is now ${status}. Notes: ${providerNotes || 'None'}`,
+        title: `Warranty Revisit ${status || 'Updated'}`,
+        message: `Your warranty revisit status is now ${status || 'updated'}.${providerNotes ? ` Notes: ${providerNotes}` : ''}`,
         type: 'WARRANTY',
+        link: `/customer/bookings/${warranty.bookingId?._id || warranty.bookingId}`,
       });
     }
 

@@ -8,20 +8,28 @@ import {
   DollarSign,
   ShieldCheck,
   Zap,
+  Users,
+  Check,
+  Clock,
+  XCircle,
 } from 'lucide-react';
 import api from '../../services/api';
 
 export default function AdminSubscriptions() {
+  const [activeTab, setActiveTab] = useState('plans'); // 'plans' | 'subscribers'
   const [plans, setPlans] = useState([]);
+  const [subscriptions, setSubscriptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [approvingId, setApprovingId] = useState(null);
 
   const [formData, setFormData] = useState({
     name: '',
     slug: '',
     category: 'Home Maintenance',
+    tier: 'SILVER',
     description: '',
     price: '999',
     durationDays: 30,
@@ -29,20 +37,24 @@ export default function AdminSubscriptions() {
     features: '',
   });
 
-  const fetchPlans = async () => {
+  const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await api.get('/plans');
-      setPlans(res.data);
+      const [plansRes, subsRes] = await Promise.all([
+        api.get('/subscription-plans').catch(() => api.get('/plans')),
+        api.get('/admin/subscriptions').catch(() => ({ data: [] })),
+      ]);
+      setPlans(Array.isArray(plansRes.data) ? plansRes.data : []);
+      setSubscriptions(Array.isArray(subsRes.data) ? subsRes.data : []);
     } catch (err) {
-      console.error('Failed to load plans:', err);
+      console.error('Failed to load subscriptions data:', err);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchPlans();
+    fetchData();
   }, []);
 
   const handleOpenAdd = () => {
@@ -50,6 +62,7 @@ export default function AdminSubscriptions() {
       name: '',
       slug: '',
       category: 'Home Maintenance',
+      tier: 'SILVER',
       description: '',
       price: '999',
       durationDays: 30,
@@ -70,17 +83,33 @@ export default function AdminSubscriptions() {
       .filter(Boolean);
 
     try {
-      await api.post('/plans', {
+      await api.post('/subscription-plans', {
         ...formData,
         features: featureList,
       });
       setFeedback({ type: 'success', message: `Subscription plan "${formData.name}" created!` });
       setModalOpen(false);
-      fetchPlans();
+      fetchData();
     } catch (err) {
       setFeedback({ type: 'error', message: err.message || 'Failed to create plan' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleApproveSubscription = async (id) => {
+    setApprovingId(id);
+    setFeedback(null);
+    try {
+      await api.post(`/admin/subscriptions/${id}/approve`, {
+        approvalNotes: 'Manual cash payment verified by administrator',
+      });
+      setFeedback({ type: 'success', message: 'Subscription manual payment verified and activated!' });
+      fetchData();
+    } catch (err) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to approve subscription' });
+    } finally {
+      setApprovingId(null);
     }
   };
 
@@ -90,15 +119,47 @@ export default function AdminSubscriptions() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Subscription Plans Management</h1>
           <p className="text-xs text-slate-500 mt-1">
-            Configure recurring residential and commercial maintenance plans for long-term customer retention
+            Configure recurring residential maintenance plans and audit manual offline subscriber activations
           </p>
         </div>
+
+        <div className="flex items-center space-x-2">
+          {activeTab === 'plans' && (
+            <button
+              onClick={handleOpenAdd}
+              className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center"
+            >
+              <Plus className="w-4 h-4 mr-1.5" />
+              <span>Create New Plan</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex space-x-2 border-b border-slate-200">
         <button
-          onClick={handleOpenAdd}
-          className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center self-start sm:self-auto"
+          onClick={() => setActiveTab('plans')}
+          className={`pb-3 text-xs font-bold flex items-center space-x-2 border-b-2 transition-colors ${
+            activeTab === 'plans'
+              ? 'border-primary-600 text-primary-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
         >
-          <Plus className="w-4 h-4 mr-1.5" />
-          <span>Create New Plan</span>
+          <Layers className="w-4 h-4" />
+          <span>Plans Catalog ({plans.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('subscribers')}
+          className={`pb-3 text-xs font-bold flex items-center space-x-2 border-b-2 transition-colors ${
+            activeTab === 'subscribers'
+              ? 'border-primary-600 text-primary-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          <span>Subscribers & Manual Approvals ({subscriptions.length})</span>
         </button>
       </div>
 
@@ -119,60 +180,134 @@ export default function AdminSubscriptions() {
         </div>
       )}
 
-      {/* Plans Cards */}
+      {/* Tab Content */}
       {loading ? (
-        <div className="p-12 text-center text-xs text-slate-400">Loading subscription plans...</div>
-      ) : plans.length === 0 ? (
-        <div className="p-12 text-center text-xs text-slate-400 bg-white rounded-3xl border border-slate-100">
-          No subscription plans created yet
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {plans.map((p) => (
-            <div
-              key={p.id}
-              className="bg-white p-6 rounded-3xl border border-slate-100 shadow-xs flex flex-col justify-between space-y-6 hover:shadow-md transition-shadow relative overflow-hidden"
-            >
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-primary-600 bg-primary-50 px-2.5 py-1 rounded-full">
-                  {p.category}
-                </span>
-
-                <h3 className="font-bold text-slate-900 text-lg mt-3">{p.name}</h3>
-                <p className="text-xs text-slate-500 mt-1">{p.description}</p>
-
-                <div className="mt-4 flex items-baseline space-x-1">
-                  <span className="text-3xl font-extrabold text-slate-900">₹{p.price}</span>
-                  <span className="text-xs text-slate-400 font-medium">/ {p.durationDays} days</span>
-                </div>
-
-                <div className="mt-2 text-xs font-semibold text-emerald-600 flex items-center">
-                  <Zap className="w-3.5 h-3.5 mr-1" />
-                  <span>{p.serviceLimit} Free Service Visits Included</span>
-                </div>
-
-                <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
-                  <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
-                    Plan Features:
+        <div className="p-12 text-center text-xs text-slate-400">Loading subscriptions data...</div>
+      ) : activeTab === 'plans' ? (
+        plans.length === 0 ? (
+          <div className="p-12 text-center text-xs text-slate-400 bg-white rounded-3xl border border-slate-100">
+            No subscription plans created yet
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {plans.map((p) => (
+              <div
+                key={p.id || p._id}
+                className="bg-white p-6 rounded-3xl border border-slate-100 shadow-xs flex flex-col justify-between space-y-6 hover:shadow-md transition-shadow relative overflow-hidden"
+              >
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-primary-600 bg-primary-50 px-2.5 py-1 rounded-full">
+                    {p.tier || p.category}
                   </span>
-                  {p.features && p.features.length > 0 ? (
-                    p.features.map((feat, idx) => (
-                      <div key={idx} className="flex items-start space-x-2 text-xs text-slate-600">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                        <span>{feat}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <span className="text-xs text-slate-400">No features specified</span>
-                  )}
+
+                  <h3 className="font-bold text-slate-900 text-lg mt-3">{p.name}</h3>
+                  <p className="text-xs text-slate-500 mt-1">{p.description}</p>
+
+                  <div className="mt-4 flex items-baseline space-x-1">
+                    <span className="text-3xl font-extrabold text-slate-900">₹{p.price}</span>
+                    <span className="text-xs text-slate-400 font-medium">/ {p.durationDays} days</span>
+                  </div>
+
+                  <div className="mt-2 text-xs font-semibold text-emerald-600 flex items-center">
+                    <Zap className="w-3.5 h-3.5 mr-1" />
+                    <span>{p.serviceLimit} Free Service Visits Included</span>
+                  </div>
+
+                  <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+                    <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                      Plan Features:
+                    </span>
+                    {p.features && p.features.length > 0 ? (
+                      p.features.map((feat, idx) => (
+                        <div key={idx} className="flex items-start space-x-2 text-xs text-slate-600">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                          <span>{feat}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-400">No features specified</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="pt-2 text-center text-slate-400 text-[11px]">
+                  Plan Identifier: <span className="font-mono text-slate-600">{p.slug}</span>
                 </div>
               </div>
-
-              <div className="pt-2 text-center text-slate-400 text-[11px]">
-                Plan Identifier: <span className="font-mono text-slate-600">{p.slug}</span>
-              </div>
+            ))}
+          </div>
+        )
+      ) : (
+        /* Subscribers Tab */
+        <div className="bg-white rounded-3xl border border-slate-100 shadow-xs overflow-hidden">
+          {subscriptions.length === 0 ? (
+            <div className="p-12 text-center text-xs text-slate-400">No subscriber records found</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50/70 border-b border-slate-100 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+                    <th className="py-3.5 px-4">Customer</th>
+                    <th className="py-3.5 px-4">Plan</th>
+                    <th className="py-3.5 px-4">Status</th>
+                    <th className="py-3.5 px-4">Remaining Visits</th>
+                    <th className="py-3.5 px-4">Expiry Date</th>
+                    <th className="py-3.5 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {subscriptions.map((s) => (
+                    <tr key={s._id || s.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="py-3.5 px-4">
+                        <div className="font-bold text-slate-900">
+                          {s.customerId?.userId?.fullName || s.customerId?.fullName || 'Customer'}
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          {s.customerId?.userId?.mobile || s.customerId?.phone || ''}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="font-semibold text-slate-800">{s.plan?.name || s.planId?.name || 'Standard Plan'}</div>
+                        <div className="text-[11px] text-slate-400">₹{s.totalPaid} paid via {s.paymentMethod || 'CASH'}</div>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            s.status === 'ACTIVE'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : s.status === 'PENDING_APPROVAL'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {s.status}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <span className="font-semibold text-primary-600">{s.servicesRemaining ?? 1} visits left</span>
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-500">
+                        {new Date(s.endDate).toLocaleDateString('en-IN')}
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        {s.status === 'PENDING_APPROVAL' ? (
+                          <button
+                            onClick={() => handleApproveSubscription(s._id || s.id)}
+                            disabled={approvingId === (s._id || s.id)}
+                            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold disabled:opacity-50"
+                          >
+                            {approvingId === (s._id || s.id) ? 'Approving...' : 'Approve Payment'}
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-slate-400">Verified</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ))}
+          )}
         </div>
       )}
 
@@ -195,7 +330,7 @@ export default function AdminSubscriptions() {
                     setFormData((prev) => ({
                       ...prev,
                       name,
-                      slug: name.toLowerCase().replace(/\s+/g, '-'),
+                      slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
                     }));
                   }}
                   required
@@ -246,17 +381,34 @@ export default function AdminSubscriptions() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Service Visit Limit
-                </label>
-                <input
-                  type="number"
-                  value={formData.serviceLimit}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, serviceLimit: e.target.value }))}
-                  required
-                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-primary-500 font-mono"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Service Visit Limit
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.serviceLimit}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, serviceLimit: e.target.value }))}
+                    required
+                    className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-primary-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Tier
+                  </label>
+                  <select
+                    value={formData.tier}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, tier: e.target.value }))}
+                    className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="SILVER">Silver</option>
+                    <option value="GOLD">Gold</option>
+                    <option value="PLATINUM">Platinum</option>
+                  </select>
+                </div>
               </div>
 
               <div>

@@ -4,7 +4,15 @@ const revisitSchema = new mongoose.Schema(
   {
     revisitNumber: {
       type: String,
-      required: true,
+      default: () => `REV-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`,
+    },
+    customerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'CustomerProfile',
+    },
+    providerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ProviderProfile',
     },
     reason: {
       type: String,
@@ -12,6 +20,10 @@ const revisitSchema = new mongoose.Schema(
       trim: true,
     },
     preferredDate: {
+      type: Date,
+      default: null,
+    },
+    scheduledDate: {
       type: Date,
       default: null,
     },
@@ -34,7 +46,7 @@ const revisitSchema = new mongoose.Schema(
       default: null,
     },
   },
-  { _id: true }
+  { _id: true, timestamps: true }
 );
 
 const warrantySchema = new mongoose.Schema(
@@ -74,6 +86,7 @@ const warrantySchema = new mongoose.Schema(
     startDate: {
       type: Date,
       required: true,
+      default: Date.now,
     },
     validUntil: {
       type: Date,
@@ -109,6 +122,7 @@ const warrantySchema = new mongoose.Schema(
       default: true,
     },
     revisits: [revisitSchema],
+    revisitRequests: [revisitSchema],
   },
   {
     timestamps: true,
@@ -129,6 +143,11 @@ warrantySchema.pre('save', function () {
       this.status = 'EXPIRED';
       this.isActive = false;
     }
+  }
+  if (this.revisits && this.revisits.length && (!this.revisitRequests || !this.revisitRequests.length)) {
+    this.revisitRequests = this.revisits;
+  } else if (this.revisitRequests && this.revisitRequests.length && (!this.revisits || !this.revisits.length)) {
+    this.revisits = this.revisitRequests;
   }
 });
 

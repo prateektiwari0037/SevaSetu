@@ -22,7 +22,9 @@ export const createEmergencyRequest = async (req, res, next) => {
       description,
       problemDescription,
       city,
+      addressCity,
       area,
+      addressArea,
       pincode,
       addressPincode,
       fullAddress,
@@ -34,11 +36,11 @@ export const createEmergencyRequest = async (req, res, next) => {
 
     const cat = emergencyCategory || category || 'General Emergency';
     const desc = description || problemDescription;
-    const reqCity = city || 'Mumbai';
-    const reqArea = area || '';
+    const reqCity = city || addressCity || 'Mumbai';
+    const reqArea = area || addressArea || '';
     const reqPincode = (pincode || addressPincode || '').trim();
     const reqAddress = fullAddress || serviceAddress;
-    const reqPhone = contactNumber || phone || req.user.phone;
+    const reqPhone = contactNumber || phone || req.user.phone || '';
 
     if (!desc || !reqAddress || !reqPincode) {
       return errorResponse(
@@ -48,10 +50,11 @@ export const createEmergencyRequest = async (req, res, next) => {
       );
     }
 
-    let customer = await CustomerProfile.findOne({ userId: req.user.id });
+    const userId = req.user.id || req.user._id;
+    let customer = await CustomerProfile.findOne({ userId });
     if (!customer) {
       customer = await CustomerProfile.create({
-        userId: req.user.id,
+        userId,
         fullName: req.user.fullName || 'Customer',
         phone: reqPhone || '',
       });
@@ -91,11 +94,12 @@ export const createEmergencyRequest = async (req, res, next) => {
       expiresAt,
     });
 
-    // Notify all eligible providers (in-app + Dev notification)
+    // Notify all eligible providers (in-app notification)
     for (const provider of eligibleProviders) {
-      if (provider.userId?._id || provider.userId) {
+      const pUserId = provider.userId?._id || provider.userId;
+      if (pUserId) {
         await NotificationService.sendNotification({
-          userId: provider.userId._id || provider.userId,
+          userId: pUserId,
           title: `🚨 EMERGENCY SOS DISPATCH: ${cat}`,
           message: `Urgent emergency nearby at ${reqAddress}, PIN: ${reqPincode}. Open immediately to respond.`,
           type: 'EMERGENCY',
@@ -130,14 +134,15 @@ export const createEmergencyRequest = async (req, res, next) => {
  */
 export const getMyEmergencyRequests = async (req, res, next) => {
   try {
+    const userId = req.user.id || req.user._id;
     let filter = {};
 
     if (req.user.role === 'CUSTOMER') {
-      const customer = await CustomerProfile.findOne({ userId: req.user.id });
+      const customer = await CustomerProfile.findOne({ userId });
       if (!customer) return successResponse(res, 'No emergency requests', []);
       filter.customerId = customer._id;
     } else if (req.user.role === 'PROVIDER') {
-      const provider = await ProviderProfile.findOne({ userId: req.user.id });
+      const provider = await ProviderProfile.findOne({ userId });
       if (!provider) return successResponse(res, 'No emergency requests', []);
       filter = {
         $or: [
@@ -185,7 +190,8 @@ export const respondToEmergencyRequest = async (req, res, next) => {
       return errorResponse(res, 'Action must be either ACCEPT or REJECT', 400);
     }
 
-    const provider = await ProviderProfile.findOne({ userId: req.user.id });
+    const userId = req.user.id || req.user._id;
+    const provider = await ProviderProfile.findOne({ userId });
     if (!provider) {
       return errorResponse(res, 'Provider profile required to respond to emergency requests', 403);
     }
@@ -286,7 +292,7 @@ export const respondToEmergencyRequest = async (req, res, next) => {
           status: 'ACCEPTED',
           timestamp: new Date(),
           comment: `Emergency dispatched and accepted by ${provider.fullName || 'Provider'}`,
-          changedByUserId: req.user.id,
+          changedByUserId: userId,
         },
       ],
     });
@@ -324,18 +330,40 @@ export const respondToEmergencyRequest = async (req, res, next) => {
 export const getEmergencyDetails = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const emergency = await EmergencyRequest.findById(id)
-      .populate({
-        path: 'customerId',
-        populate: { path: 'userId', select: 'fullName email phone' },
-      })
-      .populate({
-        path: 'acceptedProviderId',
-        populate: { path: 'userId', select: 'fullName email phone' },
-      })
-      .lean();
+    let emergency = null;
+
+    if (id.match(/^[0-9a-fA-F]{24}$/)) {
+      emergency = await EmergencyRequest.findById(id)
+        .populate({
+          path: 'customerId',
+          populate: { path: 'userId', select: 'fullName email phone' },
+        })
+        .populate({
+          path: 'acceptedProviderId',
+          populate: { path: 'userId', select: 'fullName email phone' },
+        })
+        .lean();
+    }
 
     if (!emergency) {
+      const booking = await Booking.findOne({
+        _id: id,
+        bookingType: 'EMERGENCY',
+      })
+        .populate('serviceId', 'name basePrice durationMinutes imageUrl')
+        .populate({ path: 'customerId', populate: { path: 'userId', select: 'fullName email phone' } })
+        .populate({ path: 'providerId', populate: { path: 'userId', select: 'fullName email phone' } })
+        .lean();
+
+      if (booking) {
+        return successResponse(res, 'Emergency details', {
+          ...booking,
+          id: booking._id.toString(),
+          customer: booking.customerId,
+          acceptedProvider: booking.providerId,
+        });
+      }
+
       return errorResponse(res, 'Emergency request not found', 404);
     }
 

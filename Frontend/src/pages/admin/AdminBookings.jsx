@@ -33,8 +33,8 @@ export default function AdminBookings() {
       if (statusFilter) params.status = statusFilter;
       if (typeFilter) params.bookingType = typeFilter;
 
-      const res = await api.get('/bookings', { params });
-      setBookings(res.data);
+      const res = await api.get('/admin/bookings', { params }).catch(() => api.get('/bookings', { params }));
+      setBookings(Array.isArray(res.data) ? res.data : Array.isArray(res.data?.items) ? res.data.items : []);
     } catch (err) {
       console.error('Failed to load bookings:', err);
     } finally {

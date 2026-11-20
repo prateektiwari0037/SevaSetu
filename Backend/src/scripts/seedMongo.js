@@ -15,6 +15,10 @@ import {
   Booking,
   Payment,
   Notification,
+  Complaint,
+  SubscriptionPlan,
+  Subscription,
+  PlatformSetting,
 } from '../models/index.js';
 
 async function seed() {
@@ -35,6 +39,10 @@ async function seed() {
     Booking.deleteMany({}),
     Payment.deleteMany({}),
     Notification.deleteMany({}),
+    Complaint.deleteMany({}),
+    SubscriptionPlan.deleteMany({}),
+    Subscription.deleteMany({}),
+    PlatformSetting.deleteMany({}),
   ]);
 
   console.log('🧹 Cleaned existing MongoDB documents.');
@@ -263,6 +271,102 @@ async function seed() {
   });
 
   console.log(`✅ Seeded sample booking (${booking.bookingNumber}) with Cash on Service.`);
+
+  // 8. Seed Subscription Plans (Silver, Gold, Platinum)
+  const plansData = [
+    {
+      name: 'Silver Home Maintenance',
+      slug: 'silver-home-maintenance',
+      tier: 'SILVER',
+      category: 'General Maintenance',
+      description: 'Essential preventive home upkeep plan with 1 complimentary technical inspection.',
+      price: 499,
+      durationDays: 30,
+      serviceLimit: 1,
+      features: ['1 Free Service Visit', 'Standard Helpline Support', '30-Day Work Warranty'],
+      isActive: true,
+    },
+    {
+      name: 'Gold Home Care',
+      slug: 'gold-home-care',
+      tier: 'GOLD',
+      category: 'Comprehensive Residential',
+      description: 'Quarterly maintenance coverage including electrical, plumbing, and appliance tune-ups.',
+      price: 1299,
+      durationDays: 90,
+      serviceLimit: 3,
+      features: ['3 Free Scheduled Inspections', 'Priority Emergency SOS Dispatch', '10% Off Hardware Catalog', '30-Day Work Warranty'],
+      isActive: true,
+    },
+    {
+      name: 'Platinum Annual Estate',
+      slug: 'platinum-annual-estate',
+      tier: 'PLATINUM',
+      category: 'Full Property Coverage',
+      description: 'Year-round complete peace of mind with 12 monthly visits and zero dispatch surcharge.',
+      price: 3999,
+      durationDays: 365,
+      serviceLimit: 12,
+      features: ['12 Monthly Comprehensive Inspections', 'Zero Booking Fee', '24/7 Priority Emergency SOS', '15% Off Spare Parts', 'Dedicated Support Manager'],
+      isActive: true,
+    },
+  ];
+
+  const plans = await SubscriptionPlan.insertMany(plansData);
+  console.log(`✅ Seeded ${plans.length} subscription plans (Silver, Gold, Platinum).`);
+
+  // Active subscription for sample customer
+  await Subscription.create({
+    customerId: customerProfile._id,
+    planId: plans[1]._id, // Gold plan
+    status: 'ACTIVE',
+    paymentMethod: 'CASH',
+    startDate: new Date(),
+    endDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+    servicesRemaining: 3,
+    totalPaid: plans[1].price,
+  });
+  console.log('✅ Seeded active sample customer subscription.');
+
+  // 9. Seed Sample Support Complaint Ticket
+  await Complaint.create({
+    ticketNumber: 'CMP-100201-445',
+    customerId: customerProfile._id,
+    bookingId: booking._id,
+    title: 'Delayed technician arrival for MCB inspection',
+    description: 'Technician was delayed by 45 minutes beyond the scheduled 10:00 AM slot.',
+    category: 'SERVICE_QUALITY',
+    status: 'IN_REVIEW',
+    assignedAdminId: adminUser._id,
+    messages: [
+      {
+        senderUserId: customerUser._id,
+        senderRole: 'CUSTOMER',
+        message: 'Technician was delayed by 45 minutes beyond the scheduled 10:00 AM slot.',
+        timestamp: new Date(Date.now() - 3600000),
+      },
+      {
+        senderUserId: adminUser._id,
+        senderRole: 'ADMIN',
+        message: 'We apologize for the inconvenience. We have verified with the provider who faced traffic congestion. We are reviewing compensation options.',
+        timestamp: new Date(),
+      },
+    ],
+  });
+  console.log('✅ Seeded sample dispute complaint ticket.');
+
+  // 10. Seed Platform Configuration Settings
+  const defaultSettings = [
+    { key: 'platformCommissionPct', value: '10', description: 'Standard platform revenue commission percentage' },
+    { key: 'standardWarrantyDays', value: '30', description: 'Standard service guarantee warranty in calendar days' },
+    { key: 'emergencyRadiusKm', value: '15', description: 'Default radius in kilometers for emergency SOS dispatch' },
+    { key: 'bookingCancellationRule', value: 'Cancellations allowed up to 2 hours before scheduled slot.', description: 'Cancellation policy rules' },
+    { key: 'emergencyHotline', value: '+91 1800 123 4567', description: 'Public emergency helpline' },
+    { key: 'supportEmail', value: 'support@sevasetu.com', description: 'Customer grievance support email' },
+  ];
+
+  await PlatformSetting.insertMany(defaultSettings);
+  console.log(`✅ Seeded ${defaultSettings.length} platform configuration settings.`);
   console.log('\n🎉 SevaSetu MongoDB database seeding completed successfully!\n');
 
   await disconnectDB();

@@ -25,7 +25,7 @@ export default function AdminComplaints() {
   const fetchComplaints = async () => {
     setLoading(true);
     try {
-      const res = await api.get('/complaints');
+      const res = await api.get('/admin/complaints').catch(() => api.get('/complaints'));
       setComplaints(res.data);
     } catch (err) {
       console.error('Failed to load complaints:', err);
@@ -40,7 +40,7 @@ export default function AdminComplaints() {
 
   const handleSelectTicket = async (id) => {
     try {
-      const res = await api.get(`/complaints/${id}`);
+      const res = await api.get(`/admin/complaints/${id}`).catch(() => api.get(`/complaints/${id}`));
       setSelectedTicket(res.data);
       setAdminNotes(res.data.adminNotes || '');
     } catch (err) {
@@ -54,7 +54,7 @@ export default function AdminComplaints() {
 
     setSendingReply(true);
     try {
-      await api.post(`/complaints/${selectedTicket.id}/messages`, {
+      await api.post(`/admin/complaints/${selectedTicket.id}/messages`, {
         message: replyText.trim(),
       });
       setReplyText('');
@@ -71,7 +71,7 @@ export default function AdminComplaints() {
     if (!selectedTicket) return;
     setUpdatingStatus(true);
     try {
-      await api.patch(`/complaints/${selectedTicket.id}/status`, {
+      await api.patch(`/admin/complaints/${selectedTicket.id}`, {
         status,
         adminNotes,
       });

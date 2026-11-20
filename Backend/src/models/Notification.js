@@ -20,12 +20,28 @@ const notificationSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['SYSTEM', 'BOOKING', 'EMERGENCY', 'PAYMENT', 'SUPPORT', 'QUOTATION', 'VERIFICATION', 'REVIEW', 'WARRANTY'],
+      enum: [
+        'SYSTEM',
+        'BOOKING',
+        'EMERGENCY',
+        'PAYMENT',
+        'SUPPORT',
+        'QUOTATION',
+        'VERIFICATION',
+        'REVIEW',
+        'WARRANTY',
+        'COMPLAINT',
+        'SUBSCRIPTION',
+      ],
       default: 'SYSTEM',
     },
     link: {
       type: String,
       default: null,
+    },
+    data: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
     },
     isRead: {
       type: Boolean,
